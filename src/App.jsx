@@ -28,6 +28,26 @@ const TABS = [
   { id: 'noticias', label: 'Noticias', icon: Newspaper },
 ];
 
+/**
+ * Load settings from localStorage.
+ * No more useMock toggle — we auto-detect based on available keys.
+ */
+function loadSettings() {
+  try {
+    const saved = localStorage.getItem('cartera-settings');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        alphaVantageKey: parsed.alphaVantageKey || '',
+        gnewsKey: parsed.gnewsKey || '',
+      };
+    }
+  } catch (e) {
+    console.warn('Error cargando configuración:', e);
+  }
+  return { alphaVantageKey: '', gnewsKey: '' };
+}
+
 function LoadingSkeleton() {
   return (
     <div className="container" style={{ padding: '16px' }}>
@@ -48,29 +68,49 @@ export default function App() {
   const [chartStock, setChartStock] = useState(null);
   const [selectedAsset, setSelectedAsset] = useState(null);
   const { favorites, toggleFavorite, isFavorite } = useFavorites();
-  const [settings, setSettings] = useState(() => {
-    const saved = localStorage.getItem('cartera-settings');
-    return saved ? JSON.parse(saved) : { useMock: true, alphaVantageKey: '', gnewsKey: '' };
-  });
+  const [settings, setSettings] = useState(loadSettings);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      if (settings.useMock) {
-        await new Promise(r => setTimeout(r, 600));
-        setCryptoData(mockCryptoData);
-        setStockData(mockStockData);
-        setNewsData(mockNews);
-      } else {
-        const [crypto, stocks, news] = await Promise.all([
-          fetchCryptoData(),
-          fetchAllStocks(settings.alphaVantageKey),
-          fetchNews(settings.gnewsKey),
-        ]);
-        setCryptoData(crypto);
-        setStockData(stocks);
-        setNewsData(news);
+      // Crypto: siempre intentar CoinGecko (gratis, sin key)
+      let crypto;
+      try {
+        crypto = await fetchCryptoData();
+      } catch (e) {
+        console.warn('CoinGecko no disponible, usando mock:', e.message);
+        crypto = mockCryptoData;
       }
+
+      // Acciones: usar Alpha Vantage si hay key, mock si no
+      let stocks;
+      if (settings.alphaVantageKey) {
+        try {
+          stocks = await fetchAllStocks(settings.alphaVantageKey);
+        } catch (e) {
+          console.warn('Alpha Vantage no disponible, usando mock:', e.message);
+          stocks = mockStockData;
+        }
+      } else {
+        stocks = mockStockData;
+      }
+
+      // Noticias: usar GNews si hay key, mock si no
+      let news;
+      if (settings.gnewsKey) {
+        try {
+          news = await fetchNews(settings.gnewsKey);
+        } catch (e) {
+          console.warn('GNews no disponible, usando mock:', e.message);
+          news = mockNews;
+        }
+      } else {
+        news = mockNews;
+      }
+
+      setCryptoData(crypto);
+      setStockData(stocks);
+      setNewsData(news);
     } catch (error) {
       console.error('Error cargando datos:', error);
       setCryptoData(mockCryptoData);
@@ -79,7 +119,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [settings]);
+  }, [settings.alphaVantageKey, settings.gnewsKey]);
 
   useEffect(() => {
     loadData();
@@ -87,6 +127,7 @@ export default function App() {
 
   const handleSettingsSave = (newSettings) => {
     setSettings(newSettings);
+    // Settings are already saved to localStorage by the SettingsPanel
   };
 
   const handleSelectAsset = (asset) => {
@@ -136,6 +177,25 @@ export default function App() {
                 <StockCard key={stock.symbol} stock={stock} index={i} onShowChart={setChartStock} />
               ))}
             </div>
+
+            {/* Info banner about API keys */}
+            {!settings.alphaVantageKey && (
+              <div className="container mt-md">
+                <div style={{
+                  padding: '12px 16px',
+                  background: 'rgba(59, 130, 246, 0.08)',
+                  border: '1px solid rgba(59, 130, 246, 0.2)',
+                  borderRadius: 12,
+                  fontSize: '0.75rem',
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.5,
+                }}>
+                  💡 <strong>Tip:</strong> Las criptomonedas cargan datos reales automáticamente.
+                  Para acciones y ETFs, configurá tu API key de Alpha Vantage en ⚙️ Configuración.
+                </div>
+              </div>
+            )}
+
             <div className="disclaimer">
               <strong>⚠️ Aviso:</strong> Esta aplicación es solo para fines educativos e informativos.
               No constituye asesoramiento financiero. Las decisiones de inversión deben ser consultadas

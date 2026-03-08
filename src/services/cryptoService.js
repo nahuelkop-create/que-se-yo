@@ -4,6 +4,7 @@ const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
 
 /**
  * Fetch top crypto market data from CoinGecko
+ * CoinGecko es gratuita — siempre intentamos datos reales
  */
 export async function fetchCryptoData() {
   try {
@@ -36,6 +37,7 @@ export async function fetchCryptoData() {
 
 /**
  * Fetch price history for a crypto asset
+ * Returns daily candle data with volume
  */
 export async function fetchCryptoHistory(id, days = 30) {
   try {
@@ -46,11 +48,29 @@ export async function fetchCryptoHistory(id, days = 30) {
     if (!res.ok) throw new Error(`History API error: ${res.status}`);
     
     const data = await res.json();
-    
-    return data.prices.map(([timestamp, price]) => ({
-      date: new Date(timestamp).toISOString().split('T')[0],
-      price: parseFloat(price.toFixed(2)),
-      close: parseFloat(price.toFixed(2)),
+    const prices = data.prices || [];
+    const volumes = data.total_volumes || [];
+
+    // Group by day for proper OHLCV data
+    const dayMap = {};
+    for (const [ts, price] of prices) {
+      const day = new Date(ts).toISOString().split('T')[0];
+      if (!dayMap[day]) dayMap[day] = { prices: [], volumes: [] };
+      dayMap[day].prices.push(price);
+    }
+    for (const [ts, vol] of volumes) {
+      const day = new Date(ts).toISOString().split('T')[0];
+      if (dayMap[day]) dayMap[day].volumes.push(vol);
+    }
+
+    return Object.entries(dayMap).map(([date, { prices: ps, volumes: vs }]) => ({
+      date,
+      price: parseFloat(ps[ps.length - 1].toFixed(2)),
+      open: parseFloat(ps[0].toFixed(2)),
+      high: parseFloat(Math.max(...ps).toFixed(2)),
+      low: parseFloat(Math.min(...ps).toFixed(2)),
+      close: parseFloat(ps[ps.length - 1].toFixed(2)),
+      volume: vs.length > 0 ? Math.round(vs.reduce((a, b) => a + b, 0) / vs.length) : 0,
     }));
   } catch {
     // Return mock history for this coin

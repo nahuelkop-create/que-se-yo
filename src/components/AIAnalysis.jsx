@@ -154,6 +154,30 @@ export default function AIAnalysis({ analysis, ticker }) {
           <p className="ai-rec-box-text">{analysis.recommendation.text}</p>
         </div>
 
+        {/* Short-term vs Long-term Views */}
+        {analysis.shortTermView && analysis.longTermView && (
+          <div className="ai-dual-views">
+            <div className="ai-view-card">
+              <div className="ai-view-header">
+                <span className="ai-view-label">⚡ Corto Plazo</span>
+                <span className={`ai-view-signal ai-view-${analysis.shortTermView.signalColor}`}>
+                  {analysis.shortTermView.signal}
+                </span>
+              </div>
+              <p className="ai-view-text">{analysis.shortTermView.text}</p>
+            </div>
+            <div className="ai-view-card">
+              <div className="ai-view-header">
+                <span className="ai-view-label">🏦 Largo Plazo</span>
+                <span className={`ai-view-signal ai-view-${analysis.longTermView.signalColor}`}>
+                  {analysis.longTermView.signal}
+                </span>
+              </div>
+              <p className="ai-view-text">{analysis.longTermView.text}</p>
+            </div>
+          </div>
+        )}
+
         {/* Context Text */}
         <div className="ai-context">
           <p className="ai-context-text">{analysis.contextText}</p>
@@ -486,6 +510,64 @@ export default function AIAnalysis({ analysis, ticker }) {
           color: var(--text-secondary);
           line-height: 1.65;
           font-style: italic;
+        }
+
+        /* Dual Views (Short/Long Term) */
+        .ai-dual-views {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          margin-bottom: 14px;
+        }
+
+        .ai-view-card {
+          padding: 12px;
+          background: rgba(255, 255, 255, 0.02);
+          border-radius: var(--radius-md);
+          border: 1px solid var(--border-subtle);
+        }
+
+        .ai-view-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+
+        .ai-view-label {
+          font-size: 0.72rem;
+          font-weight: 700;
+          color: var(--text-primary);
+        }
+
+        .ai-view-signal {
+          font-size: 0.6rem;
+          font-weight: 600;
+          padding: 3px 10px;
+          border-radius: var(--radius-full);
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+
+        .ai-view-bullish {
+          background: rgba(16, 185, 129, 0.12);
+          color: #10b981;
+        }
+
+        .ai-view-bearish {
+          background: rgba(239, 68, 68, 0.12);
+          color: #ef4444;
+        }
+
+        .ai-view-neutral {
+          background: rgba(245, 158, 11, 0.12);
+          color: #f59e0b;
+        }
+
+        .ai-view-text {
+          font-size: 0.72rem;
+          color: var(--text-muted);
+          line-height: 1.6;
         }
       `}</style>
     </div>

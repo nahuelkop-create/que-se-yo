@@ -1,10 +1,11 @@
-import { useEffect, useRef, useMemo } from 'react';
-import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import { useEffect, useRef, useMemo, useState } from 'react';
+import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import { calcSMA } from '../utils/analysis';
 
 export default function CandlestickChart({ data, period, height = 300 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
+  const [ohlcInfo, setOhlcInfo] = useState(null);
 
   // Compute SMA series from data
   const smaData = useMemo(() => {
@@ -29,6 +30,11 @@ export default function CandlestickChart({ data, period, height = 300 }) {
     return { sma20, sma50 };
   }, [data]);
 
+  // Check if we have volume data
+  const hasVolume = useMemo(() => {
+    return data?.some(d => d.volume && d.volume > 0);
+  }, [data]);
+
   useEffect(() => {
     if (!containerRef.current || !data || data.length === 0) return;
 
@@ -38,9 +44,11 @@ export default function CandlestickChart({ data, period, height = 300 }) {
       chartRef.current = null;
     }
 
+    const chartHeight = hasVolume ? height + 80 : height;
+
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
-      height,
+      height: chartHeight,
       layout: {
         background: { color: 'transparent' },
         textColor: '#64748b',
@@ -68,7 +76,9 @@ export default function CandlestickChart({ data, period, height = 300 }) {
       },
       rightPriceScale: {
         borderColor: 'rgba(255, 255, 255, 0.06)',
-        scaleMargins: { top: 0.1, bottom: 0.1 },
+        scaleMargins: hasVolume
+          ? { top: 0.05, bottom: 0.25 }
+          : { top: 0.1, bottom: 0.1 },
       },
       timeScale: {
         borderColor: 'rgba(255, 255, 255, 0.06)',
@@ -93,6 +103,32 @@ export default function CandlestickChart({ data, period, height = 300 }) {
     });
 
     candleSeries.setData(data);
+
+    // Volume histogram (below the candles)
+    if (hasVolume) {
+      const volumeSeries = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'volume',
+      });
+
+      // Configure volume price scale
+      chart.priceScale('volume').applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+        borderVisible: false,
+      });
+
+      const volumeData = data
+        .filter(d => d.volume && d.volume > 0)
+        .map(d => ({
+          time: d.time,
+          value: d.volume,
+          color: d.close >= d.open
+            ? 'rgba(16, 185, 129, 0.35)'
+            : 'rgba(239, 68, 68, 0.35)',
+        }));
+
+      volumeSeries.setData(volumeData);
+    }
 
     // SMA 20
     if (smaData.sma20.length > 0) {
@@ -120,6 +156,53 @@ export default function CandlestickChart({ data, period, height = 300 }) {
       sma50Series.setData(smaData.sma50);
     }
 
+    // Crosshair move handler for OHLC info
+    chart.subscribeCrosshairMove((param) => {
+      if (!param || !param.time) {
+        setOhlcInfo(null);
+        return;
+      }
+
+      const candle = param.seriesData?.get(candleSeries);
+      if (candle) {
+        // Format the time/date for display
+        let dateStr;
+        if (typeof param.time === 'number') {
+          // Unix timestamp
+          const d = new Date(param.time * 1000);
+          dateStr = d.toLocaleDateString('es-AR', {
+            day: '2-digit', month: 'short', year: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          });
+        } else if (typeof param.time === 'string') {
+          const d = new Date(param.time + 'T12:00:00');
+          dateStr = d.toLocaleDateString('es-AR', {
+            day: '2-digit', month: 'short', year: 'numeric',
+          });
+        } else {
+          dateStr = `${param.time.day}/${param.time.month}/${param.time.year}`;
+        }
+
+        // Find the original data point for volume
+        const originalPoint = data.find(d => {
+          if (typeof d.time === typeof param.time) return d.time === param.time;
+          return String(d.time) === String(param.time);
+        });
+
+        setOhlcInfo({
+          date: dateStr,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: originalPoint?.volume || null,
+          isUp: candle.close >= candle.open,
+        });
+      } else {
+        setOhlcInfo(null);
+      }
+    });
+
     // Fit content
     chart.timeScale().fitContent();
 
@@ -138,7 +221,7 @@ export default function CandlestickChart({ data, period, height = 300 }) {
         chartRef.current = null;
       }
     };
-  }, [data, period, height, smaData]);
+  }, [data, period, height, smaData, hasVolume]);
 
   if (!data || data.length === 0) {
     return (
@@ -155,9 +238,56 @@ export default function CandlestickChart({ data, period, height = 300 }) {
     );
   }
 
+  /**
+   * Format price for display
+   */
+  const fmtPrice = (v) => {
+    if (v >= 1000) return `$${v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (v >= 1) return `$${v.toFixed(2)}`;
+    return `$${v.toFixed(4)}`;
+  };
+
+  const fmtVol = (v) => {
+    if (!v) return null;
+    if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
+    return v.toFixed(0);
+  };
+
   return (
     <div className="candlestick-wrapper">
+      {/* OHLC Info bar */}
+      {ohlcInfo && (
+        <div className="ohlc-bar">
+          <span className="ohlc-date">{ohlcInfo.date}</span>
+          <span className="ohlc-item">
+            <span className="ohlc-label">O</span>
+            <span className={ohlcInfo.isUp ? 'price-up' : 'price-down'}>{fmtPrice(ohlcInfo.open)}</span>
+          </span>
+          <span className="ohlc-item">
+            <span className="ohlc-label">H</span>
+            <span className="price-up">{fmtPrice(ohlcInfo.high)}</span>
+          </span>
+          <span className="ohlc-item">
+            <span className="ohlc-label">L</span>
+            <span className="price-down">{fmtPrice(ohlcInfo.low)}</span>
+          </span>
+          <span className="ohlc-item">
+            <span className="ohlc-label">C</span>
+            <span className={ohlcInfo.isUp ? 'price-up' : 'price-down'}>{fmtPrice(ohlcInfo.close)}</span>
+          </span>
+          {ohlcInfo.volume && (
+            <span className="ohlc-item">
+              <span className="ohlc-label">Vol</span>
+              <span style={{ color: 'var(--text-secondary)' }}>{fmtVol(ohlcInfo.volume)}</span>
+            </span>
+          )}
+        </div>
+      )}
+
       <div ref={containerRef} className="candlestick-container" />
+
       <div className="candle-legend">
         <span className="legend-item">
           <span className="legend-dot" style={{ background: '#10b981' }} /> Alcista
@@ -171,6 +301,11 @@ export default function CandlestickChart({ data, period, height = 300 }) {
         <span className="legend-item">
           <span className="legend-line" style={{ borderColor: '#f59e0b' }} /> SMA 50
         </span>
+        {hasVolume && (
+          <span className="legend-item">
+            <span className="legend-dot" style={{ background: 'rgba(100, 116, 139, 0.5)', width: 10, height: 6, borderRadius: 2 }} /> Volumen
+          </span>
+        )}
       </div>
 
       <style>{`
@@ -183,6 +318,37 @@ export default function CandlestickChart({ data, period, height = 300 }) {
 
         .candlestick-container {
           width: 100%;
+        }
+
+        .ohlc-bar {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 12px;
+          border-bottom: 1px solid var(--border-subtle);
+          font-size: 0.62rem;
+          font-family: 'Inter', monospace;
+          min-height: 28px;
+        }
+
+        .ohlc-date {
+          color: var(--text-muted);
+          font-weight: 500;
+          margin-right: 4px;
+        }
+
+        .ohlc-item {
+          display: flex;
+          align-items: center;
+          gap: 3px;
+        }
+
+        .ohlc-label {
+          color: var(--text-muted);
+          font-weight: 600;
+          font-size: 0.58rem;
+          text-transform: uppercase;
         }
 
         .candle-legend {

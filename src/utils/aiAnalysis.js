@@ -1,6 +1,6 @@
-// Motor de análisis IA por horizonte temporal
+// Motor de análisis técnico por horizonte temporal
 // Genera análisis contextual basado en reglas técnicas coherentes
-// Diseñado para ser reemplazable por un backend de IA real sin cambiar la interfaz
+// Distingue entre corto plazo (trading) y largo plazo (inversión)
 
 import { calcSMA, calcRSI, detectTrend, formatCurrency } from './analysis';
 
@@ -15,6 +15,7 @@ const PERIOD_CONFIG = {
     horizon: 'intradía',
     volatilityMult: 0.3,
     confidenceBase: 45,
+    isShortTerm: true,
   },
   '1W': {
     label: '1 semana',
@@ -22,6 +23,7 @@ const PERIOD_CONFIG = {
     horizon: 'corto plazo',
     volatilityMult: 0.6,
     confidenceBase: 50,
+    isShortTerm: true,
   },
   '1M': {
     label: '1 mes',
@@ -29,6 +31,7 @@ const PERIOD_CONFIG = {
     horizon: 'mediano plazo',
     volatilityMult: 1.0,
     confidenceBase: 55,
+    isShortTerm: false,
   },
   '1Y': {
     label: '1 año',
@@ -36,6 +39,7 @@ const PERIOD_CONFIG = {
     horizon: 'largo plazo',
     volatilityMult: 2.5,
     confidenceBase: 40,
+    isShortTerm: false,
   },
   'MAX': {
     label: 'máximo histórico',
@@ -43,6 +47,7 @@ const PERIOD_CONFIG = {
     horizon: 'perspectiva general',
     volatilityMult: 4.0,
     confidenceBase: 35,
+    isShortTerm: false,
   },
 };
 
@@ -50,15 +55,11 @@ const PERIOD_CONFIG = {
 // Cálculo de soporte y resistencia
 // ═══════════════════════════════════════════
 
-/**
- * Calculate support level from local minimums
- */
 export function calcSupport(data, lookback = 20) {
   if (!data || data.length < 5) return null;
   const prices = data.slice(-Math.min(lookback, data.length));
   const lows = prices.map(d => d.low || d.close || d.price || d);
   
-  // Find the lowest valley
   let support = Infinity;
   for (let i = 1; i < lows.length - 1; i++) {
     if (lows[i] < lows[i - 1] && lows[i] < lows[i + 1]) {
@@ -66,23 +67,15 @@ export function calcSupport(data, lookback = 20) {
     }
   }
   
-  // Fallback: use the overall minimum
-  if (support === Infinity) {
-    support = Math.min(...lows);
-  }
-  
+  if (support === Infinity) support = Math.min(...lows);
   return parseFloat(support.toFixed(2));
 }
 
-/**
- * Calculate resistance level from local maximums
- */
 export function calcResistance(data, lookback = 20) {
   if (!data || data.length < 5) return null;
   const prices = data.slice(-Math.min(lookback, data.length));
   const highs = prices.map(d => d.high || d.close || d.price || d);
   
-  // Find the highest peak
   let resistance = -Infinity;
   for (let i = 1; i < highs.length - 1; i++) {
     if (highs[i] > highs[i - 1] && highs[i] > highs[i + 1]) {
@@ -90,11 +83,7 @@ export function calcResistance(data, lookback = 20) {
     }
   }
   
-  // Fallback: use the overall maximum
-  if (resistance === -Infinity) {
-    resistance = Math.max(...highs);
-  }
-  
+  if (resistance === -Infinity) resistance = Math.max(...highs);
   return parseFloat(resistance.toFixed(2));
 }
 
@@ -181,31 +170,28 @@ function interpretSupportResistance(currentPrice, support, resistance) {
 }
 
 // ═══════════════════════════════════════════
-// Estimación de porcentaje
+// Estimación de rango
 // ═══════════════════════════════════════════
 
 function estimateRange(trend, rsi, changePercent, period, support, resistance, currentPrice) {
   const config = PERIOD_CONFIG[period] || PERIOD_CONFIG['1M'];
   const baseVol = Math.abs(changePercent || 1) * config.volatilityMult;
 
-  // Adjust based on trend
   let upBias = 0;
   if (trend === 'alcista') upBias = baseVol * 0.3;
   if (trend === 'bajista') upBias = -baseVol * 0.3;
 
-  // Adjust based on RSI
   if (rsi !== null) {
     if (rsi >= 70) upBias -= baseVol * 0.2;
     if (rsi <= 30) upBias += baseVol * 0.2;
   }
 
-  // Adjust based on support/resistance proximity
   if (support && resistance && currentPrice) {
     const range = resistance - support;
     if (range > 0) {
       const pos = (currentPrice - support) / range;
-      if (pos > 0.8) upBias -= baseVol * 0.15; // near resistance, less upside
-      if (pos < 0.2) upBias += baseVol * 0.15; // near support, more upside
+      if (pos > 0.8) upBias -= baseVol * 0.15;
+      if (pos < 0.2) upBias += baseVol * 0.15;
     }
   }
 
@@ -220,17 +206,120 @@ function estimateRange(trend, rsi, changePercent, period, support, resistance, c
 }
 
 // ═══════════════════════════════════════════
+// Vista corto plazo (trading)
+// ═══════════════════════════════════════════
+
+function generateShortTermView(ticker, trend, rsi, smaSignal, srProximity, support, resistance, currentPrice, changePercent) {
+  const parts = [];
+
+  // Entry signal
+  if (trend === 'alcista' && rsi !== null && rsi < 70 && srProximity !== 'near_resistance') {
+    parts.push(`${ticker} muestra condiciones favorables para una entrada de corto plazo. La tendencia alcista está respaldada por indicadores técnicos.`);
+  } else if (trend === 'alcista' && rsi !== null && rsi >= 70) {
+    parts.push(`Aunque la tendencia es alcista, el RSI en ${rsi} sugiere sobrecompra temporal. Podría ser prudente esperar un retroceso antes de entrar.`);
+  } else if (trend === 'bajista' && rsi !== null && rsi <= 30) {
+    parts.push(`El activo está sobrevendido (RSI ${rsi}) dentro de una tendencia bajista. Podría haber un rebote técnico de corto plazo, pero el riesgo sigue siendo alto.`);
+  } else if (trend === 'bajista') {
+    parts.push(`Las señales de corto plazo son negativas. La presión vendedora domina y conviene evitar entradas hasta ver un cambio de momentum.`);
+  } else {
+    parts.push(`Las señales de corto plazo son mixtas. No hay una dirección clara, lo que sugiere esperar confirmación antes de operar.`);
+  }
+
+  // Support/resistance context
+  if (srProximity === 'near_support' && support) {
+    parts.push(`El precio está cercano al soporte en ${formatCurrency(support)}. Si se mantiene, podría generar un rebote interesante.`);
+  } else if (srProximity === 'near_resistance' && resistance) {
+    parts.push(`El precio se acerca a la resistencia en ${formatCurrency(resistance)}. Una ruptura abriría espacio al alza; un rechazo podría llevar a corrección.`);
+  }
+
+  // Signal
+  let signal, signalColor;
+  if (trend === 'alcista' && rsi !== null && rsi < 70 && smaSignal !== 'bearish') {
+    signal = 'Posible entrada de corto plazo';
+    signalColor = 'bullish';
+  } else if (trend === 'bajista' && (rsi === null || rsi > 30)) {
+    signal = 'Evitar entrada de corto plazo';
+    signalColor = 'bearish';
+  } else if (rsi !== null && rsi <= 30) {
+    signal = 'Posible rebote técnico';
+    signalColor = 'neutral';
+  } else if (rsi !== null && rsi >= 70) {
+    signal = 'Esperar retroceso';
+    signalColor = 'neutral';
+  } else {
+    signal = 'Esperar confirmación';
+    signalColor = 'neutral';
+  }
+
+  return {
+    text: parts.join(' '),
+    signal,
+    signalColor,
+  };
+}
+
+// ═══════════════════════════════════════════
+// Vista largo plazo (inversión)
+// ═══════════════════════════════════════════
+
+function generateLongTermView(ticker, trend, rsi, smaSignal, srProximity, changePercent) {
+  const parts = [];
+
+  // Structural trend
+  if (trend === 'alcista' && smaSignal === 'bullish') {
+    parts.push(`La estructura técnica de largo plazo es positiva. Las medias móviles confirman una tendencia alcista sostenida, lo que podría favorecer la acumulación gradual.`);
+  } else if (trend === 'bajista' && smaSignal === 'bearish') {
+    parts.push(`La estructura de largo plazo muestra debilidad. Las medias móviles están en cruce bajista, lo que indica que la tendencia descendente podría continuar.`);
+  } else if (trend === 'alcista') {
+    parts.push(`La tendencia de largo plazo es moderadamente positiva, aunque no todos los indicadores están alineados. Un enfoque gradual podría ser razonable.`);
+  } else if (trend === 'bajista') {
+    parts.push(`La tendencia general es negativa, pero algunos indicadores sugieren que el deterioro podría estar desacelerándose.`);
+  } else {
+    parts.push(`El activo se encuentra en una fase de consolidación. No hay una tendencia definida de largo plazo, lo que dificulta una recomendación clara.`);
+  }
+
+  // RSI in long-term context
+  if (rsi !== null) {
+    if (rsi <= 30) {
+      parts.push(`Los niveles de sobreventa actual podrían representar una oportunidad de acumulación para inversores con horizonte largo, aunque siempre considerando los fundamentales del activo.`);
+    } else if (rsi >= 70) {
+      parts.push(`Los niveles de sobrecompra sugieren que el precio podría tomarse una pausa. Para posiciones de largo plazo, considerar esperar una corrección sana antes de agregar.`);
+    }
+  }
+
+  // Signal
+  let signal, signalColor;
+  if (trend === 'alcista' && smaSignal === 'bullish' && (rsi === null || rsi < 70)) {
+    signal = 'Favorable para acumulación';
+    signalColor = 'bullish';
+  } else if (trend === 'bajista' && smaSignal === 'bearish' && (rsi === null || rsi > 30)) {
+    signal = 'Mantener cautela';
+    signalColor = 'bearish';
+  } else if (rsi !== null && rsi <= 30 && trend !== 'bajista') {
+    signal = 'Posible oportunidad';
+    signalColor = 'neutral';
+  } else {
+    signal = 'Monitorear evolución';
+    signalColor = 'neutral';
+  }
+
+  return {
+    text: parts.join(' '),
+    signal,
+    signalColor,
+  };
+}
+
+// ═══════════════════════════════════════════
 // Recomendación final
 // ═══════════════════════════════════════════
 
 function generateRecommendation(trend, rsi, smaSignal, srProximity) {
-  let score = 0; // -3 to +3
+  let score = 0;
 
-  // Trend contribution
   if (trend === 'alcista') score += 1;
   if (trend === 'bajista') score -= 1;
 
-  // RSI contribution
   if (rsi !== null) {
     if (rsi >= 70) score -= 1;
     else if (rsi >= 55) score += 0.5;
@@ -238,11 +327,9 @@ function generateRecommendation(trend, rsi, smaSignal, srProximity) {
     else if (rsi <= 45) score -= 0.5;
   }
 
-  // SMA contribution
   if (smaSignal === 'bullish') score += 0.5;
   if (smaSignal === 'bearish') score -= 0.5;
 
-  // S/R proximity
   if (srProximity === 'near_support') score += 0.5;
   if (srProximity === 'near_resistance') score -= 0.5;
 
@@ -251,7 +338,7 @@ function generateRecommendation(trend, rsi, smaSignal, srProximity) {
       action: 'Comprar',
       color: 'bullish',
       icon: '📈',
-      text: 'Las señales técnicas confluyen positivamente. Puede ser un buen momento para considerar posiciones.',
+      text: 'Las señales técnicas confluyen positivamente. Podría ser un buen momento para considerar posiciones.',
     };
   }
   if (score <= -1.5) {
@@ -280,20 +367,16 @@ function generateContextText(ticker, period, trend, rsi, smaInterp, srInterp, es
 
   const parts = [];
 
-  // Opening
   parts.push(`En el horizonte de ${config.futureLabel}, ${ticker} muestra una tendencia ${trendText[trend]}.`);
 
-  // RSI context (simplified)
   if (rsi !== null) {
-    if (rsi >= 70) parts.push(`El indicador de fuerza relativa (${rsi}) indica que el activo está sobrecomprado, lo que puede anticipar una corrección.`);
-    else if (rsi <= 30) parts.push(`El indicador de fuerza relativa (${rsi}) sugiere sobreventa, lo que históricamente precede a rebotes.`);
+    if (rsi >= 70) parts.push(`El indicador de fuerza relativa (${rsi}) indica que el activo está sobrecomprado, lo que podría anticipar una corrección.`);
+    else if (rsi <= 30) parts.push(`El indicador de fuerza relativa (${rsi}) sugiere sobreventa, lo que históricamente podría preceder a rebotes.`);
     else parts.push(`El indicador de fuerza relativa se mantiene en zona neutral (${rsi}), sin señales extremas.`);
   }
 
-  // Estimate
   parts.push(`Basado en el análisis técnico, se estima un rango de movimiento entre +${estimate.upside}% y -${estimate.downside}% para ${config.futureLabel}.`);
 
-  // Closing
   parts.push(`Esta estimación tiene un nivel de confianza del ${estimate.confidence}% y se basa exclusivamente en indicadores técnicos. Factores fundamentales y eventos macroeconómicos pueden alterar significativamente este escenario.`);
 
   return parts.join(' ');
@@ -341,11 +424,23 @@ export function generateAIAnalysis(ticker, chartData, period, currentPrice) {
   const recommendation = generateRecommendation(trend, rsi, smaInterp.signal, srInterp.proximity);
   const contextText = generateContextText(ticker, period, trend, rsi, smaInterp, srInterp, estimate, recommendation);
 
+  // NEW: Short-term and Long-term views
+  const shortTermView = generateShortTermView(
+    ticker, trend, rsi, smaInterp.signal, srInterp.proximity,
+    support, resistance, currentPrice, changePercent
+  );
+  const longTermView = generateLongTermView(
+    ticker, trend, rsi, smaInterp.signal, srInterp.proximity, changePercent
+  );
+
+  const config = PERIOD_CONFIG[period] || PERIOD_CONFIG['1M'];
+
   return {
     hasData: true,
-    periodLabel: PERIOD_CONFIG[period]?.label || period,
-    futureLabel: PERIOD_CONFIG[period]?.futureLabel || 'el futuro',
-    horizon: PERIOD_CONFIG[period]?.horizon || 'general',
+    periodLabel: config.label || period,
+    futureLabel: config.futureLabel || 'el futuro',
+    horizon: config.horizon || 'general',
+    isShortTerm: config.isShortTerm,
 
     // Raw values
     trend,
@@ -364,6 +459,10 @@ export function generateAIAnalysis(ticker, chartData, period, currentPrice) {
     // Estimate & recommendation
     estimate,
     recommendation,
+
+    // NEW: Differentiated views
+    shortTermView,
+    longTermView,
 
     // Context text for non-technical users
     contextText,

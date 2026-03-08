@@ -1,5 +1,5 @@
 // Servicio unificado de precios para cualquier tipo de activo
-// Usa CoinGecko para crypto, Alpha Vantage para acciones/ETFs, mock para bonos/índices locales
+// Usa CoinGecko para crypto (sin key), Alpha Vantage para acciones/ETFs (con key), mock para bonos/índices locales
 
 import { mockCryptoData, mockStockData, getMockPriceData, getMockHistoryByPeriod } from '../data/mockData';
 
@@ -11,18 +11,17 @@ const PERIOD_TO_DAYS = { '1D': 1, '1W': 7, '1M': 30, '1Y': 365, 'MAX': 'max' };
 
 /**
  * Fetch OHLCV history for a specific period
- * Returns lightweight-charts format: { time, open, high, low, close }[]
+ * Returns lightweight-charts format: { time, open, high, low, close, volume? }[]
  */
 export async function fetchAssetHistory(asset, period = '1M', settings = {}) {
-  if (settings.useMock !== false) {
-    return getMockHistoryByPeriod(asset.id, period, asset.category);
-  }
-
   try {
     if (asset.source === 'coingecko') {
       return await fetchCoinGeckoOHLC(asset, period);
     }
-    // For non-crypto, fall back to mock for now (AV free tier is limited)
+    if (asset.source === 'alphavantage' && settings.alphaVantageKey) {
+      return await fetchAlphaVantageHistory(asset, period, settings.alphaVantageKey);
+    }
+    // Mock fallback for assets without API (bonos, indices locales)
     return getMockHistoryByPeriod(asset.id, period, asset.category);
   } catch (error) {
     console.warn(`Error obteniendo historial de ${asset.ticker}:`, error.message);
@@ -30,19 +29,96 @@ export async function fetchAssetHistory(asset, period = '1M', settings = {}) {
   }
 }
 
+/**
+ * Fetch OHLC data from CoinGecko + volume from market_chart
+ */
 async function fetchCoinGeckoOHLC(asset, period) {
   const days = PERIOD_TO_DAYS[period] || 30;
-  const res = await fetch(
+
+  // Fetch OHLC for candlestick data
+  const ohlcRes = await fetch(
     `${COINGECKO_BASE}/coins/${asset.sourceId}/ohlc?vs_currency=usd&days=${days}`
   );
-  if (!res.ok) throw new Error(`CoinGecko OHLC error: ${res.status}`);
+  if (!ohlcRes.ok) throw new Error(`CoinGecko OHLC error: ${ohlcRes.status}`);
+  const ohlcData = await ohlcRes.json();
 
+  // Also fetch market_chart for volume data
+  let volumeMap = {};
+  try {
+    const mcRes = await fetch(
+      `${COINGECKO_BASE}/coins/${asset.sourceId}/market_chart?vs_currency=usd&days=${days}`
+    );
+    if (mcRes.ok) {
+      const mcData = await mcRes.json();
+      if (mcData.total_volumes) {
+        for (const [ts, vol] of mcData.total_volumes) {
+          // Round to nearest hour for matching with OHLC timestamps
+          const key = Math.round(ts / 3600000) * 3600000;
+          volumeMap[key] = vol;
+        }
+      }
+    }
+  } catch { /* volume is optional */ }
+
+  return ohlcData.map(([ts, open, high, low, close]) => {
+    // Find closest volume entry
+    const volKey = Math.round(ts / 3600000) * 3600000;
+    const volume = volumeMap[volKey] || null;
+
+    return {
+      time: period === '1D'
+        ? Math.floor(ts / 1000)
+        : new Date(ts).toISOString().split('T')[0],
+      open, high, low, close,
+      volume: volume ? Math.round(volume) : undefined,
+    };
+  });
+}
+
+/**
+ * Fetch history from Alpha Vantage for stocks/ETFs
+ */
+async function fetchAlphaVantageHistory(asset, period, apiKey) {
+  // For intraday (1D), use INTRADAY endpoint
+  if (period === '1D') {
+    const res = await fetch(
+      `${ALPHA_VANTAGE_BASE}?function=TIME_SERIES_INTRADAY&symbol=${asset.sourceId}&interval=5min&apikey=${apiKey}`
+    );
+    if (!res.ok) throw new Error(`AV intraday error: ${res.status}`);
+    const data = await res.json();
+    const ts = data['Time Series (5min)'];
+    if (!ts) throw new Error(data.Note || data.Information || 'No data');
+
+    return Object.entries(ts).slice(0, 78).reverse().map(([datetime, v]) => ({
+      time: Math.floor(new Date(datetime).getTime() / 1000),
+      open: parseFloat(v['1. open']),
+      high: parseFloat(v['2. high']),
+      low: parseFloat(v['3. low']),
+      close: parseFloat(v['4. close']),
+      volume: parseInt(v['5. volume']),
+    }));
+  }
+
+  // For daily+ periods, use TIME_SERIES_DAILY
+  const outputsize = (period === '1Y' || period === 'MAX') ? 'full' : 'compact';
+  const res = await fetch(
+    `${ALPHA_VANTAGE_BASE}?function=TIME_SERIES_DAILY&symbol=${asset.sourceId}&outputsize=${outputsize}&apikey=${apiKey}`
+  );
+  if (!res.ok) throw new Error(`AV daily error: ${res.status}`);
   const data = await res.json();
-  return data.map(([ts, open, high, low, close]) => ({
-    time: period === '1D'
-      ? Math.floor(ts / 1000)
-      : new Date(ts).toISOString().split('T')[0],
-    open, high, low, close,
+  const ts = data['Time Series (Daily)'];
+  if (!ts) throw new Error(data.Note || data.Information || 'No data');
+
+  const entries = Object.entries(ts);
+  const limit = { '1W': 7, '1M': 30, '1Y': 252, 'MAX': entries.length }[period] || 30;
+
+  return entries.slice(0, limit).reverse().map(([date, v]) => ({
+    time: date,
+    open: parseFloat(v['1. open']),
+    high: parseFloat(v['2. high']),
+    low: parseFloat(v['3. low']),
+    close: parseFloat(v['4. close']),
+    volume: parseInt(v['5. volume']),
   }));
 }
 
@@ -51,18 +127,15 @@ async function fetchCoinGeckoOHLC(asset, period) {
  * Returns normalized: { price, change, changePercent, marketCap, volume, high24h, low24h, priceHistory }
  */
 export async function fetchAssetPrice(asset, settings = {}) {
-  if (settings.useMock !== false) {
-    return getMockAssetPrice(asset);
-  }
-
   try {
     if (asset.source === 'coingecko') {
       return await fetchCoinGeckoPrice(asset);
-    } else if (asset.source === 'alphavantage' && settings.alphaVantageKey) {
-      return await fetchAlphaVantagePrice(asset, settings.alphaVantageKey);
-    } else {
-      return getMockAssetPrice(asset);
     }
+    if (asset.source === 'alphavantage' && settings.alphaVantageKey) {
+      return await fetchAlphaVantagePrice(asset, settings.alphaVantageKey);
+    }
+    // No API available — use mock
+    return getMockAssetPrice(asset);
   } catch (error) {
     console.warn(`Error obteniendo precio de ${asset.ticker}:`, error.message);
     return getMockAssetPrice(asset);
@@ -81,7 +154,7 @@ async function fetchCoinGeckoPrice(asset) {
   const data = await res.json();
   const md = data.market_data;
 
-  // Also fetch history
+  // Also fetch history for analysis
   let priceHistory = [];
   try {
     const histRes = await fetch(
@@ -89,14 +162,31 @@ async function fetchCoinGeckoPrice(asset) {
     );
     if (histRes.ok) {
       const histData = await histRes.json();
-      priceHistory = histData.prices.map(([ts, p]) => ({
-        date: new Date(ts).toISOString().split('T')[0],
-        price: parseFloat(p.toFixed(2)),
-        close: parseFloat(p.toFixed(2)),
-        open: parseFloat(p.toFixed(2)),
-        high: parseFloat((p * 1.005).toFixed(2)),
-        low: parseFloat((p * 0.995).toFixed(2)),
-        volume: 0,
+
+      // Build better OHLCV from market_chart data
+      const prices = histData.prices || [];
+      const volumes = histData.total_volumes || [];
+
+      // Group by day for daily candles
+      const dayMap = {};
+      for (const [ts, price] of prices) {
+        const day = new Date(ts).toISOString().split('T')[0];
+        if (!dayMap[day]) dayMap[day] = { prices: [], volumes: [] };
+        dayMap[day].prices.push(price);
+      }
+      for (const [ts, vol] of volumes) {
+        const day = new Date(ts).toISOString().split('T')[0];
+        if (dayMap[day]) dayMap[day].volumes.push(vol);
+      }
+
+      priceHistory = Object.entries(dayMap).map(([date, { prices: ps, volumes: vs }]) => ({
+        date,
+        open: parseFloat(ps[0].toFixed(2)),
+        high: parseFloat(Math.max(...ps).toFixed(2)),
+        low: parseFloat(Math.min(...ps).toFixed(2)),
+        close: parseFloat(ps[ps.length - 1].toFixed(2)),
+        price: parseFloat(ps[ps.length - 1].toFixed(2)),
+        volume: vs.length > 0 ? Math.round(vs.reduce((a, b) => a + b, 0) / vs.length) : 0,
       }));
     }
   } catch { /* use empty history */ }
@@ -112,6 +202,7 @@ async function fetchCoinGeckoPrice(asset) {
     sparkline: data.market_data?.sparkline_7d?.price || [],
     priceHistory,
     image: data.image?.small || asset.image,
+    rank: data.market_cap_rank || null,
   };
 }
 
@@ -165,6 +256,7 @@ async function fetchAlphaVantagePrice(asset, apiKey) {
     sparkline: priceHistory.slice(-7).map(d => d.close),
     priceHistory,
     image: null,
+    rank: null,
   };
 }
 
@@ -186,6 +278,7 @@ function getMockAssetPrice(asset) {
       sparkline: existingCrypto.sparkline_in_7d?.price || [],
       priceHistory: existingCrypto.priceHistory || [],
       image: existingCrypto.image,
+      rank: null,
     };
   }
 
@@ -204,10 +297,11 @@ function getMockAssetPrice(asset) {
       sparkline: existingStock.priceHistory.slice(-7).map(d => d.close),
       priceHistory: existingStock.priceHistory,
       image: null,
+      rank: null,
     };
   }
 
   // Generate mock data for any asset not in existing mocks
   const mockData = getMockPriceData(asset.id, asset.category);
-  return mockData;
+  return { ...mockData, rank: null };
 }

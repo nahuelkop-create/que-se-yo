@@ -1,0 +1,4 @@
+cartera-inteligente
+ ┣ public
+ ┃ ┗ icon.png
+ 
