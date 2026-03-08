@@ -3,15 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="description" content="Cartera Inteligente — Análisis de inversiones en criptomonedas y acciones con indicadores técnicos" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="description" content="Cartera Inteligente — Análisis de inversiones en criptomonedas, acciones, ETFs y más con indicadores técnicos e IA" />
     <meta name="theme-color" content="#0a0e17" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Cartera Inteligente" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icon.png" />
     <title>Cartera Inteligente</title>
-    <link rel="manifest" href="/manifest.json">
-<link rel="apple-touch-icon" href="/icon.png">
-<meta name="apple-mobile-web-app-title" content="Cartera Inteligente">
+    <style>
+      /* Splash / initial load */
+      #root:empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        min-height: 100dvh;
+        background: #0a0e17;
+      }
+      #root:empty::after {
+        content: '📊';
+        font-size: 48px;
+        animation: splash-pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes splash-pulse {
+        0%, 100% { opacity: 0.3; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.1); }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

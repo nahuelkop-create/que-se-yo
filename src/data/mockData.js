@@ -148,3 +148,141 @@ export const mockNews = [
     url: '#',
   },
 ];
+
+// ═══════════════════════════════════════════
+// Generador de datos mock para cualquier activo del catálogo
+// ═══════════════════════════════════════════
+
+const MOCK_BASE_PRICES = {
+  // Crypto
+  bitcoin: 67432, ethereum: 3521, solana: 178, binancecoin: 612, ripple: 0.62,
+  cardano: 0.45, 'avalanche-2': 38, polkadot: 7.2, chainlink: 18.5, dogecoin: 0.16,
+  // Acciones
+  aapl: 195, msft: 420, googl: 155, amzn: 185, nvda: 880, tsla: 245, meta: 505, jpm: 198, v: 280, ko: 62,
+  // CEDEARs (precio en pesos aprox / ratio)
+  'cedear-aapl': 9750, 'cedear-msft': 42000, 'cedear-googl': 11500, 'cedear-meli': 280000,
+  'cedear-tsla': 16300, 'cedear-nvda': 88000, 'cedear-amzn': 5100, 'cedear-ko': 12400,
+  // Índices (via ETF proxy)
+  sp500: 527, nasdaq: 455, dowjones: 395, merval: 1850000, ibovespa: 128000,
+  // ETFs
+  voo: 485, vti: 268, vxus: 58, arkk: 52, gld: 215, tlt: 92, eem: 42,
+  // Bonos (rendimiento)
+  us10y: 4.25, us2y: 4.68, al30: 62.5, gd30: 58.3, gd35: 45.2,
+};
+
+const MOCK_VOLATILITY = {
+  crypto: 0.035,
+  acciones: 0.015,
+  cedears: 0.02,
+  indices: 0.01,
+  etfs: 0.012,
+  bonos: 0.008,
+};
+
+/**
+ * Generate mock price data for any asset
+ */
+export function getMockPriceData(assetId, category = 'acciones') {
+  const basePrice = MOCK_BASE_PRICES[assetId] || 100;
+  const volatility = MOCK_VOLATILITY[category] || 0.015;
+  const priceHistory = generatePriceHistory(basePrice, 60, volatility);
+  const latest = priceHistory[priceHistory.length - 1];
+  const prev = priceHistory[priceHistory.length - 2];
+
+  const change = latest.close - prev.close;
+  const changePercent = (change / prev.close) * 100;
+
+  // Market caps for crypto
+  const marketCaps = {
+    bitcoin: 1324e9, ethereum: 423e9, solana: 82e9, binancecoin: 92e9,
+    ripple: 34e9, cardano: 16e9, 'avalanche-2': 14e9, polkadot: 9e9,
+    chainlink: 11e9, dogecoin: 23e9,
+  };
+
+  return {
+    price: latest.close,
+    change: parseFloat(change.toFixed(2)),
+    changePercent: parseFloat(changePercent.toFixed(2)),
+    marketCap: marketCaps[assetId] || null,
+    volume: latest.volume,
+    high24h: latest.high,
+    low24h: latest.low,
+    sparkline: priceHistory.slice(-7).map(d => d.close),
+    priceHistory,
+    image: null,
+  };
+}
+
+// ═══════════════════════════════════════════
+// Generador de OHLCV por período (para gráfico de velas)
+// ═══════════════════════════════════════════
+
+/**
+ * Generate OHLCV data formatted for lightweight-charts by period
+ * Returns: { time, open, high, low, close, volume }[]
+ */
+function generateOHLCVByPeriod(basePrice, period, volatility = 0.015) {
+  const data = [];
+  let price = basePrice;
+  const now = new Date();
+
+  // Period config: { bars, intervalMs, volMult }
+  const config = {
+    '1D': { bars: 78, intervalMs: 5 * 60 * 1000, volMult: 0.3 },        // 5min bars, ~6.5h trading
+    '1W': { bars: 120, intervalMs: 60 * 60 * 1000, volMult: 0.5 },      // 1h bars
+    '1M': { bars: 30, intervalMs: 24 * 60 * 60 * 1000, volMult: 1 },    // daily bars
+    '1Y': { bars: 252, intervalMs: 24 * 60 * 60 * 1000, volMult: 1 },   // daily bars
+    'MAX': { bars: 260, intervalMs: 7 * 24 * 60 * 60 * 1000, volMult: 2 }, // weekly bars
+  };
+
+  const { bars, intervalMs, volMult } = config[period] || config['1M'];
+  const vol = volatility * volMult;
+
+  // Start price slightly varied
+  price = basePrice * (0.85 + Math.random() * 0.15);
+
+  for (let i = bars; i >= 0; i--) {
+    const timestamp = new Date(now.getTime() - i * intervalMs);
+
+    // Random OHLC with realistic wicks
+    const change = (Math.random() - 0.48) * vol * price;
+    const open = price;
+    price = Math.max(price * 0.5, price + change);
+    const close = price;
+    const isUp = close >= open;
+    const wickUp = Math.random() * vol * 0.5 * price;
+    const wickDown = Math.random() * vol * 0.5 * price;
+    const high = Math.max(open, close) + wickUp;
+    const low = Math.min(open, close) - wickDown;
+
+    // Format time for lightweight-charts
+    let time;
+    if (period === '1D') {
+      // Use unix timestamp for intraday
+      time = Math.floor(timestamp.getTime() / 1000);
+    } else {
+      // Use YYYY-MM-DD string for daily+
+      time = timestamp.toISOString().split('T')[0];
+    }
+
+    data.push({
+      time,
+      open: parseFloat(open.toFixed(2)),
+      high: parseFloat(high.toFixed(2)),
+      low: parseFloat(Math.max(0.01, low).toFixed(2)),
+      close: parseFloat(close.toFixed(2)),
+      volume: Math.floor(Math.random() * 10000000) + 500000,
+    });
+  }
+
+  return data;
+}
+
+/**
+ * Get mock OHLCV history for any asset + period
+ */
+export function getMockHistoryByPeriod(assetId, period = '1M', category = 'acciones') {
+  const basePrice = MOCK_BASE_PRICES[assetId] || 100;
+  const volatility = MOCK_VOLATILITY[category] || 0.015;
+  return generateOHLCVByPeriod(basePrice, period, volatility);
+}

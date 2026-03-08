@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { LayoutDashboard, Bitcoin, LineChart, Newspaper, Activity } from 'lucide-react';
+import { LayoutDashboard, Bitcoin, LineChart, Newspaper, Search, Star, Crosshair } from 'lucide-react';
 import Header from './components/Header';
 import PortfolioSummary from './components/PortfolioSummary';
 import CryptoCard from './components/CryptoCard';
@@ -8,6 +8,12 @@ import PriceChart from './components/PriceChart';
 import NewsCard from './components/NewsCard';
 import TechnicalPanel from './components/TechnicalPanel';
 import SettingsPanel from './components/SettingsPanel';
+import ExploreTab from './components/ExploreTab';
+import AssetDetail from './components/AssetDetail';
+import NewsTab from './components/NewsTab';
+import WatchlistTab from './components/WatchlistTab';
+import RadarTab from './components/RadarTab';
+import useFavorites from './hooks/useFavorites';
 import { fetchCryptoData } from './services/cryptoService';
 import { fetchAllStocks } from './services/stockService';
 import { fetchNews } from './services/newsService';
@@ -15,10 +21,11 @@ import { mockCryptoData, mockStockData, mockNews } from './data/mockData';
 
 const TABS = [
   { id: 'resumen', label: 'Resumen', icon: LayoutDashboard },
+  { id: 'explorar', label: 'Explorar', icon: Search },
+  { id: 'favoritos', label: 'Favoritos', icon: Star },
+  { id: 'radar', label: 'Radar', icon: Crosshair },
   { id: 'crypto', label: 'Crypto', icon: Bitcoin },
-  { id: 'acciones', label: 'Acciones', icon: LineChart },
   { id: 'noticias', label: 'Noticias', icon: Newspaper },
-  { id: 'tecnico', label: 'Técnico', icon: Activity },
 ];
 
 function LoadingSkeleton() {
@@ -39,6 +46,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [chartStock, setChartStock] = useState(null);
+  const [selectedAsset, setSelectedAsset] = useState(null);
+  const { favorites, toggleFavorite, isFavorite } = useFavorites();
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('cartera-settings');
     return saved ? JSON.parse(saved) : { useMock: true, alphaVantageKey: '', gnewsKey: '' };
@@ -48,7 +57,6 @@ export default function App() {
     setLoading(true);
     try {
       if (settings.useMock) {
-        // Simulate network delay for mockup feel
         await new Promise(r => setTimeout(r, 600));
         setCryptoData(mockCryptoData);
         setStockData(mockStockData);
@@ -81,6 +89,27 @@ export default function App() {
     setSettings(newSettings);
   };
 
+  const handleSelectAsset = (asset) => {
+    setSelectedAsset(asset);
+  };
+
+  const handleBackFromDetail = () => {
+    setSelectedAsset(null);
+  };
+
+  // If an asset is selected, show its detail view (full screen, hides tabs)
+  if (selectedAsset) {
+    return (
+      <AssetDetail
+        asset={selectedAsset}
+        onBack={handleBackFromDetail}
+        settings={settings}
+        isFavorite={isFavorite(selectedAsset.ticker)}
+        onToggleFavorite={toggleFavorite}
+      />
+    );
+  }
+
   const renderContent = () => {
     if (loading) return <LoadingSkeleton />;
 
@@ -110,9 +139,37 @@ export default function App() {
             <div className="disclaimer">
               <strong>⚠️ Aviso:</strong> Esta aplicación es solo para fines educativos e informativos.
               No constituye asesoramiento financiero. Las decisiones de inversión deben ser consultadas
-              con un profesional certificado. Inverte con responsabilidad.
+              con un profesional certificado. Invierte con responsabilidad.
             </div>
           </>
+        );
+
+      case 'explorar':
+        return (
+          <ExploreTab
+            onSelectAsset={handleSelectAsset}
+            settings={settings}
+            isFavorite={isFavorite}
+            onToggleFavorite={toggleFavorite}
+          />
+        );
+
+      case 'favoritos':
+        return (
+          <WatchlistTab
+            favorites={favorites}
+            toggleFavorite={toggleFavorite}
+            onSelectAsset={handleSelectAsset}
+            settings={settings}
+          />
+        );
+
+      case 'radar':
+        return (
+          <RadarTab
+            onSelectAsset={handleSelectAsset}
+            settings={settings}
+          />
         );
 
       case 'crypto':
@@ -130,38 +187,8 @@ export default function App() {
           </div>
         );
 
-      case 'acciones':
-        return (
-          <div className="container mt-md">
-            <div className="section-header">
-              <h2 className="section-title">
-                <LineChart size={18} /> Mercado de Acciones
-              </h2>
-              <span className="section-subtitle">{stockData?.length || 0} activos</span>
-            </div>
-            {stockData?.map((stock, i) => (
-              <StockCard key={stock.symbol} stock={stock} index={i} onShowChart={setChartStock} />
-            ))}
-          </div>
-        );
-
       case 'noticias':
-        return (
-          <div className="container mt-md">
-            <div className="section-header">
-              <h2 className="section-title">
-                <Newspaper size={18} /> Noticias Financieras
-              </h2>
-              <span className="section-subtitle">Últimas noticias</span>
-            </div>
-            {newsData?.map((article, i) => (
-              <NewsCard key={i} article={article} index={i} />
-            ))}
-          </div>
-        );
-
-      case 'tecnico':
-        return <TechnicalPanel cryptoData={cryptoData} stockData={stockData} />;
+        return <NewsTab />;
 
       default:
         return null;
