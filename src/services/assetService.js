@@ -1,7 +1,6 @@
 // Servicio unificado de precios para cualquier tipo de activo
-// Usa CoinGecko para crypto (sin key), Alpha Vantage para acciones/ETFs (con key), mock para bonos/índices locales
-
-import { mockCryptoData, mockStockData, getMockPriceData, getMockHistoryByPeriod } from '../data/mockData';
+// Cada respuesta incluye dataQuality para transparencia total
+// NO devuelve mock silencioso — si falla, retorna estado honesto
 
 const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
 const ALPHA_VANTAGE_BASE = 'https://www.alphavantage.co/query';
@@ -9,23 +8,99 @@ const ALPHA_VANTAGE_BASE = 'https://www.alphavantage.co/query';
 // Period to CoinGecko days mapping
 const PERIOD_TO_DAYS = { '1D': 1, '1W': 7, '1M': 30, '1Y': 365, 'MAX': 'max' };
 
+// ═══════════════════════════════════════════
+// DATA QUALITY — formato uniforme
+// ═══════════════════════════════════════════
+
 /**
- * Fetch OHLCV history for a specific period
- * Returns lightweight-charts format: { time, open, high, low, close, volume? }[]
+ * Crea un objeto dataQuality estándar.
+ * @param {boolean} isReal - ¿dato de fuente real?
+ * @param {string} source - 'CoinGecko' | 'AlphaVantage' | 'GNews' | 'mock'
+ * @param {string} freshness - 'fresh' | 'stale' | 'unknown'
+ * @param {string} [reason] - razón legible en español
+ */
+function makeDataQuality(isReal, source, freshness, reason = '') {
+  return {
+    isReal,
+    source,
+    lastUpdated: new Date().toISOString(),
+    freshness,
+    reason,
+  };
+}
+
+/**
+ * Evalúa la frescura de datos basándose en el timestamp.
+ * Crypto: frescos si < 2h, stale si > 24h
+ * Acciones/ETFs: frescos si dentro del último día hábil, stale si > 3 días
+ */
+function evaluateFreshness(dataTimestamp, assetCategory) {
+  if (!dataTimestamp) return 'unknown';
+
+  const now = new Date();
+  const dataDate = new Date(dataTimestamp);
+  const diffHours = (now - dataDate) / (1000 * 60 * 60);
+
+  if (assetCategory === 'crypto') {
+    if (diffHours <= 2) return 'fresh';
+    if (diffHours <= 24) return 'fresh'; // Crypto CoinGecko siempre es reciente
+    return 'stale';
+  }
+
+  // Acciones, ETFs, índices, CEDEARs
+  if (diffHours <= 48) return 'fresh'; // Últimas 48h hábiles
+  if (diffHours <= 96) return 'stale';
+  return 'unknown';
+}
+
+
+// ═══════════════════════════════════════════
+// FETCH OHLCV HISTORY
+// ═══════════════════════════════════════════
+
+/**
+ * Fetch OHLCV history for a specific period.
+ * Returns: { data: [...candles], dataQuality: {...} }
  */
 export async function fetchAssetHistory(asset, period = '1M', settings = {}) {
   try {
     if (asset.source === 'coingecko') {
-      return await fetchCoinGeckoOHLC(asset, period);
+      const data = await fetchCoinGeckoOHLC(asset, period);
+      return {
+        data,
+        dataQuality: makeDataQuality(true, 'CoinGecko', 'fresh', `Velas de CoinGecko (${period})`),
+      };
     }
     if (asset.source === 'alphavantage' && settings.alphaVantageKey) {
-      return await fetchAlphaVantageHistory(asset, period, settings.alphaVantageKey);
+      const data = await fetchAlphaVantageHistory(asset, period, settings.alphaVantageKey);
+      return {
+        data,
+        dataQuality: makeDataQuality(true, 'AlphaVantage', 'fresh', `Historial de Alpha Vantage (${period})`),
+      };
     }
-    // Mock fallback for assets without API (bonos, indices locales)
-    return getMockHistoryByPeriod(asset.id, period, asset.category);
+    // No hay fuente disponible
+    return {
+      data: null,
+      dataQuality: makeDataQuality(
+        false,
+        asset.source === 'alphavantage' ? 'AlphaVantage' : 'mock',
+        'unknown',
+        asset.source === 'alphavantage'
+          ? 'Se necesita API key de Alpha Vantage para historial.'
+          : 'No hay fuente de historial disponible para este activo.'
+      ),
+    };
   } catch (error) {
     console.warn(`Error obteniendo historial de ${asset.ticker}:`, error.message);
-    return getMockHistoryByPeriod(asset.id, period, asset.category);
+    return {
+      data: null,
+      dataQuality: makeDataQuality(
+        false,
+        asset.source === 'coingecko' ? 'CoinGecko' : 'AlphaVantage',
+        'unknown',
+        `Error: ${error.message}`
+      ),
+    };
   }
 }
 
@@ -35,7 +110,6 @@ export async function fetchAssetHistory(asset, period = '1M', settings = {}) {
 async function fetchCoinGeckoOHLC(asset, period) {
   const days = PERIOD_TO_DAYS[period] || 30;
 
-  // Fetch OHLC for candlestick data
   const ohlcRes = await fetch(
     `${COINGECKO_BASE}/coins/${asset.sourceId}/ohlc?vs_currency=usd&days=${days}`
   );
@@ -52,7 +126,6 @@ async function fetchCoinGeckoOHLC(asset, period) {
       const mcData = await mcRes.json();
       if (mcData.total_volumes) {
         for (const [ts, vol] of mcData.total_volumes) {
-          // Round to nearest hour for matching with OHLC timestamps
           const key = Math.round(ts / 3600000) * 3600000;
           volumeMap[key] = vol;
         }
@@ -61,7 +134,6 @@ async function fetchCoinGeckoOHLC(asset, period) {
   } catch { /* volume is optional */ }
 
   return ohlcData.map(([ts, open, high, low, close]) => {
-    // Find closest volume entry
     const volKey = Math.round(ts / 3600000) * 3600000;
     const volume = volumeMap[volKey] || null;
 
@@ -79,7 +151,6 @@ async function fetchCoinGeckoOHLC(asset, period) {
  * Fetch history from Alpha Vantage for stocks/ETFs
  */
 async function fetchAlphaVantageHistory(asset, period, apiKey) {
-  // For intraday (1D), use INTRADAY endpoint
   if (period === '1D') {
     const res = await fetch(
       `${ALPHA_VANTAGE_BASE}?function=TIME_SERIES_INTRADAY&symbol=${asset.sourceId}&interval=5min&apikey=${apiKey}`
@@ -99,7 +170,6 @@ async function fetchAlphaVantageHistory(asset, period, apiKey) {
     }));
   }
 
-  // For daily+ periods, use TIME_SERIES_DAILY
   const outputsize = (period === '1Y' || period === 'MAX') ? 'full' : 'compact';
   const res = await fetch(
     `${ALPHA_VANTAGE_BASE}?function=TIME_SERIES_DAILY&symbol=${asset.sourceId}&outputsize=${outputsize}&apikey=${apiKey}`
@@ -122,9 +192,14 @@ async function fetchAlphaVantageHistory(asset, period, apiKey) {
   }));
 }
 
+
+// ═══════════════════════════════════════════
+// FETCH CURRENT PRICE
+// ═══════════════════════════════════════════
+
 /**
- * Fetch current price + basic data for an asset
- * Returns normalized: { price, change, changePercent, marketCap, volume, high24h, low24h, priceHistory }
+ * Fetch current price + basic data for an asset.
+ * SIEMPRE incluye dataQuality. NO cae a mock silenciosamente.
  */
 export async function fetchAssetPrice(asset, settings = {}) {
   try {
@@ -134,17 +209,65 @@ export async function fetchAssetPrice(asset, settings = {}) {
     if (asset.source === 'alphavantage' && settings.alphaVantageKey) {
       return await fetchAlphaVantagePrice(asset, settings.alphaVantageKey);
     }
-    // No API available — use mock
-    return getMockAssetPrice(asset);
+
+    // No hay fuente disponible — retornar estado honesto, NO mock
+    return makeNoDataResponse(asset);
   } catch (error) {
     console.warn(`Error obteniendo precio de ${asset.ticker}:`, error.message);
-    return getMockAssetPrice(asset);
+    return makeErrorResponse(asset, error.message);
   }
 }
 
 /**
- * Fetch price from CoinGecko (crypto)
+ * Respuesta para cuando no hay fuente de datos (sin key, fuente mock, etc.)
  */
+function makeNoDataResponse(asset) {
+  const reason = asset.source === 'alphavantage'
+    ? 'Configurá tu API key de Alpha Vantage en ⚙️ Configuración.'
+    : 'No hay fuente de datos disponible para este activo.';
+
+  return {
+    price: null,
+    change: null,
+    changePercent: null,
+    marketCap: null,
+    volume: null,
+    high24h: null,
+    low24h: null,
+    sparkline: [],
+    priceHistory: [],
+    image: asset.image || null,
+    rank: null,
+    dataQuality: makeDataQuality(false, asset.source || 'mock', 'unknown', reason),
+  };
+}
+
+/**
+ * Respuesta para cuando la fuente falla
+ */
+function makeErrorResponse(asset, errorMessage) {
+  const sourceName = asset.source === 'coingecko' ? 'CoinGecko' : 'AlphaVantage';
+  return {
+    price: null,
+    change: null,
+    changePercent: null,
+    marketCap: null,
+    volume: null,
+    high24h: null,
+    low24h: null,
+    sparkline: [],
+    priceHistory: [],
+    image: asset.image || null,
+    rank: null,
+    dataQuality: makeDataQuality(false, sourceName, 'unknown', `Error al obtener datos: ${errorMessage}`),
+  };
+}
+
+
+// ═══════════════════════════════════════════
+// COINGECKO PRICE
+// ═══════════════════════════════════════════
+
 async function fetchCoinGeckoPrice(asset) {
   const res = await fetch(
     `${COINGECKO_BASE}/coins/${asset.sourceId}?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=true`
@@ -154,7 +277,7 @@ async function fetchCoinGeckoPrice(asset) {
   const data = await res.json();
   const md = data.market_data;
 
-  // Also fetch history for analysis
+  // Fetch history for analysis
   let priceHistory = [];
   try {
     const histRes = await fetch(
@@ -162,12 +285,9 @@ async function fetchCoinGeckoPrice(asset) {
     );
     if (histRes.ok) {
       const histData = await histRes.json();
-
-      // Build better OHLCV from market_chart data
       const prices = histData.prices || [];
       const volumes = histData.total_volumes || [];
 
-      // Group by day for daily candles
       const dayMap = {};
       for (const [ts, price] of prices) {
         const day = new Date(ts).toISOString().split('T')[0];
@@ -191,6 +311,8 @@ async function fetchCoinGeckoPrice(asset) {
     }
   } catch { /* use empty history */ }
 
+  const freshness = evaluateFreshness(md.last_updated, 'crypto');
+
   return {
     price: md.current_price?.usd || 0,
     change: md.price_change_24h || 0,
@@ -203,14 +325,16 @@ async function fetchCoinGeckoPrice(asset) {
     priceHistory,
     image: data.image?.small || asset.image,
     rank: data.market_cap_rank || null,
+    dataQuality: makeDataQuality(true, 'CoinGecko', freshness, `Precio en tiempo real de CoinGecko.`),
   };
 }
 
-/**
- * Fetch price from Alpha Vantage (stocks, ETFs, indices)
- */
+
+// ═══════════════════════════════════════════
+// ALPHA VANTAGE PRICE
+// ═══════════════════════════════════════════
+
 async function fetchAlphaVantagePrice(asset, apiKey) {
-  // Global quote for current price
   const quoteRes = await fetch(
     `${ALPHA_VANTAGE_BASE}?function=GLOBAL_QUOTE&symbol=${asset.sourceId}&apikey=${apiKey}`
   );
@@ -224,6 +348,7 @@ async function fetchAlphaVantagePrice(asset, apiKey) {
 
   // Daily time series for history
   let priceHistory = [];
+  let lastDataDate = gq['07. latest trading day'] || null;
   try {
     const histRes = await fetch(
       `${ALPHA_VANTAGE_BASE}?function=TIME_SERIES_DAILY&symbol=${asset.sourceId}&outputsize=compact&apikey=${apiKey}`
@@ -245,6 +370,8 @@ async function fetchAlphaVantagePrice(asset, apiKey) {
     }
   } catch { /* use empty history */ }
 
+  const freshness = evaluateFreshness(lastDataDate, asset.category);
+
   return {
     price: parseFloat(gq['05. price']),
     change: parseFloat(gq['09. change'] || 0),
@@ -257,51 +384,6 @@ async function fetchAlphaVantagePrice(asset, apiKey) {
     priceHistory,
     image: null,
     rank: null,
+    dataQuality: makeDataQuality(true, 'AlphaVantage', freshness, `Datos de Alpha Vantage (${lastDataDate || 'reciente'}).`),
   };
-}
-
-/**
- * Get mock price data for any asset
- */
-function getMockAssetPrice(asset) {
-  // Check existing mock data first
-  const existingCrypto = mockCryptoData.find(c => c.id === asset.sourceId);
-  if (existingCrypto) {
-    return {
-      price: existingCrypto.current_price,
-      change: existingCrypto.current_price * (existingCrypto.price_change_percentage_24h / 100),
-      changePercent: existingCrypto.price_change_percentage_24h,
-      marketCap: existingCrypto.market_cap,
-      volume: existingCrypto.total_volume,
-      high24h: existingCrypto.current_price * 1.02,
-      low24h: existingCrypto.current_price * 0.98,
-      sparkline: existingCrypto.sparkline_in_7d?.price || [],
-      priceHistory: existingCrypto.priceHistory || [],
-      image: existingCrypto.image,
-      rank: null,
-    };
-  }
-
-  const existingStock = mockStockData.find(s => s.symbol === asset.sourceId);
-  if (existingStock) {
-    const latest = existingStock.priceHistory[existingStock.priceHistory.length - 1];
-    const prev = existingStock.priceHistory[existingStock.priceHistory.length - 2] || latest;
-    return {
-      price: latest.close,
-      change: latest.close - prev.close,
-      changePercent: ((latest.close - prev.close) / prev.close) * 100,
-      marketCap: null,
-      volume: latest.volume,
-      high24h: latest.high,
-      low24h: latest.low,
-      sparkline: existingStock.priceHistory.slice(-7).map(d => d.close),
-      priceHistory: existingStock.priceHistory,
-      image: null,
-      rank: null,
-    };
-  }
-
-  // Generate mock data for any asset not in existing mocks
-  const mockData = getMockPriceData(asset.id, asset.category);
-  return { ...mockData, rank: null };
 }

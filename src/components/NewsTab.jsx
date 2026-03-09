@@ -31,7 +31,7 @@ function timeAgo(dateStr) {
   return `hace ${Math.floor(diff / 86400)}d`;
 }
 
-export default function NewsTab() {
+export default function NewsTab({ newsQuality }) {
   const [category, setCategory] = useState('todo');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -51,6 +51,20 @@ export default function NewsTab() {
         </h2>
         <span className="section-subtitle">{news.length} artículos</span>
       </div>
+
+      {/* Mock news banner */}
+      {newsQuality && !newsQuality.isReal && (
+        <div style={{
+          padding: '10px 14px', marginBottom: 14, borderRadius: 12,
+          background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)',
+          fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.5,
+        }}>
+          ⚠️ <strong style={{ color: '#f59e0b' }}>Noticias de ejemplo</strong>
+          <p style={{ margin: '4px 0 0', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+            {newsQuality.reason}
+          </p>
+        </div>
+      )}
 
       {/* Search */}
       <div className="nt-search-bar">

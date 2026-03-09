@@ -17,7 +17,6 @@ import useFavorites from './hooks/useFavorites';
 import { fetchCryptoData } from './services/cryptoService';
 import { fetchAllStocks } from './services/stockService';
 import { fetchNews } from './services/newsService';
-import { mockCryptoData, mockStockData, mockNews } from './data/mockData';
 
 const TABS = [
   { id: 'resumen', label: 'Resumen', icon: LayoutDashboard },
@@ -28,10 +27,6 @@ const TABS = [
   { id: 'noticias', label: 'Noticias', icon: Newspaper },
 ];
 
-/**
- * Load settings from localStorage.
- * No more useMock toggle — we auto-detect based on available keys.
- */
 function loadSettings() {
   try {
     const saved = localStorage.getItem('cartera-settings');
@@ -58,11 +53,43 @@ function LoadingSkeleton() {
   );
 }
 
+/**
+ * DataQualityBanner — muestra un aviso cuando los datos no son reales
+ */
+function DataQualityBanner({ dataQuality, label }) {
+  if (!dataQuality || dataQuality.isReal) return null;
+
+  return (
+    <div style={{
+      padding: '10px 14px',
+      background: 'rgba(245, 158, 11, 0.08)',
+      border: '1px solid rgba(245, 158, 11, 0.2)',
+      borderRadius: 12,
+      fontSize: '0.72rem',
+      color: 'var(--text-secondary)',
+      lineHeight: 1.5,
+      marginBottom: 12,
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 8,
+    }}>
+      <span style={{ fontSize: '1rem', flexShrink: 0 }}>⚠️</span>
+      <div>
+        <strong style={{ color: '#f59e0b' }}>{label}: Sin datos confiables</strong>
+        <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: '0.68rem' }}>
+          {dataQuality.reason}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('resumen');
   const [cryptoData, setCryptoData] = useState(null);
   const [stockData, setStockData] = useState(null);
   const [newsData, setNewsData] = useState(null);
+  const [newsQuality, setNewsQuality] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [chartStock, setChartStock] = useState(null);
@@ -78,44 +105,41 @@ export default function App() {
       try {
         crypto = await fetchCryptoData();
       } catch (e) {
-        console.warn('CoinGecko no disponible, usando mock:', e.message);
-        crypto = mockCryptoData;
+        console.warn('Error cargando crypto:', e.message);
+        crypto = [];
       }
 
-      // Acciones: usar Alpha Vantage si hay key, mock si no
+      // Acciones: usar Alpha Vantage si hay key
       let stocks;
-      if (settings.alphaVantageKey) {
-        try {
-          stocks = await fetchAllStocks(settings.alphaVantageKey);
-        } catch (e) {
-          console.warn('Alpha Vantage no disponible, usando mock:', e.message);
-          stocks = mockStockData;
-        }
-      } else {
-        stocks = mockStockData;
+      try {
+        stocks = await fetchAllStocks(settings.alphaVantageKey);
+      } catch (e) {
+        console.warn('Error cargando stocks:', e.message);
+        stocks = [];
       }
 
-      // Noticias: usar GNews si hay key, mock si no
-      let news;
-      if (settings.gnewsKey) {
-        try {
-          news = await fetchNews(settings.gnewsKey);
-        } catch (e) {
-          console.warn('GNews no disponible, usando mock:', e.message);
-          news = mockNews;
-        }
-      } else {
-        news = mockNews;
+      // Noticias: fetchNews ahora retorna { articles, dataQuality }
+      let newsResult;
+      try {
+        newsResult = await fetchNews(settings.gnewsKey);
+      } catch (e) {
+        console.warn('Error cargando noticias:', e.message);
+        newsResult = {
+          articles: [],
+          dataQuality: { isReal: false, source: 'GNews', lastUpdated: new Date().toISOString(), freshness: 'unknown', reason: `Error: ${e.message}` }
+        };
       }
 
       setCryptoData(crypto);
       setStockData(stocks);
-      setNewsData(news);
+      setNewsData(newsResult.articles);
+      setNewsQuality(newsResult.dataQuality);
     } catch (error) {
       console.error('Error cargando datos:', error);
-      setCryptoData(mockCryptoData);
-      setStockData(mockStockData);
-      setNewsData(mockNews);
+      setCryptoData([]);
+      setStockData([]);
+      setNewsData([]);
+      setNewsQuality({ isReal: false, source: 'mock', lastUpdated: new Date().toISOString(), freshness: 'unknown', reason: 'Error general cargando datos.' });
     } finally {
       setLoading(false);
     }
@@ -127,7 +151,6 @@ export default function App() {
 
   const handleSettingsSave = (newSettings) => {
     setSettings(newSettings);
-    // Settings are already saved to localStorage by the SettingsPanel
   };
 
   const handleSelectAsset = (asset) => {
@@ -138,7 +161,7 @@ export default function App() {
     setSelectedAsset(null);
   };
 
-  // If an asset is selected, show its detail view (full screen, hides tabs)
+  // If an asset is selected, show its detail view
   if (selectedAsset) {
     return (
       <AssetDetail
@@ -151,6 +174,13 @@ export default function App() {
     );
   }
 
+  // Check if crypto and stocks have any real data
+  const cryptoHasReal = cryptoData?.some(c => c.dataQuality?.isReal);
+  const stocksHasReal = stockData?.some(s => s.dataQuality?.isReal);
+  // Get crypto dataQuality for banner (from first item that has it)
+  const cryptoQuality = cryptoData?.find(c => c.dataQuality)?.dataQuality;
+  const stockQuality = stockData?.find(s => s.dataQuality)?.dataQuality;
+
   const renderContent = () => {
     if (loading) return <LoadingSkeleton />;
 
@@ -160,22 +190,53 @@ export default function App() {
           <>
             <PortfolioSummary cryptoData={cryptoData} stockData={stockData} />
             <div className="container">
+              {/* Crypto section */}
               <div className="section-header mt-md">
                 <h2 className="section-title">
                   <Bitcoin size={16} /> Crypto Destacados
                 </h2>
               </div>
-              {cryptoData?.slice(0, 2).map((coin, i) => (
+
+              {!cryptoHasReal && (
+                <DataQualityBanner dataQuality={cryptoQuality} label="Criptomonedas" />
+              )}
+
+              {cryptoData?.filter(c => c.current_price !== null).slice(0, 2).map((coin, i) => (
                 <CryptoCard key={coin.id} coin={coin} index={i} />
               ))}
+
+              {cryptoData?.every(c => c.current_price === null) && (
+                <div style={{
+                  textAlign: 'center', padding: '20px', color: 'var(--text-muted)', fontSize: '0.8rem',
+                  background: 'var(--bg-glass)', borderRadius: 12, border: '1px solid var(--border-glass)',
+                }}>
+                  No hay datos de criptomonedas disponibles en este momento.
+                </div>
+              )}
+
+              {/* Stocks section */}
               <div className="section-header mt-lg">
                 <h2 className="section-title">
                   <LineChart size={16} /> Acciones Destacadas
                 </h2>
               </div>
-              {stockData?.slice(0, 2).map((stock, i) => (
+
+              {!stocksHasReal && (
+                <DataQualityBanner dataQuality={stockQuality} label="Acciones" />
+              )}
+
+              {stockData?.filter(s => s.dataQuality?.isReal).slice(0, 2).map((stock, i) => (
                 <StockCard key={stock.symbol} stock={stock} index={i} onShowChart={setChartStock} />
               ))}
+
+              {!stocksHasReal && stockData?.length > 0 && (
+                <div style={{
+                  textAlign: 'center', padding: '20px', color: 'var(--text-muted)', fontSize: '0.8rem',
+                  background: 'var(--bg-glass)', borderRadius: 12, border: '1px solid var(--border-glass)',
+                }}>
+                  Configurá tu API key de Alpha Vantage en ⚙️ para ver acciones.
+                </div>
+              )}
             </div>
 
             {/* Info banner about API keys */}
@@ -239,16 +300,40 @@ export default function App() {
               <h2 className="section-title">
                 <Bitcoin size={18} /> Criptomonedas
               </h2>
-              <span className="section-subtitle">{cryptoData?.length || 0} activos</span>
+              <span className="section-subtitle">
+                {cryptoData?.filter(c => c.current_price !== null).length || 0} activos con datos
+              </span>
             </div>
+
+            {!cryptoHasReal && (
+              <DataQualityBanner dataQuality={cryptoQuality} label="Criptomonedas" />
+            )}
+
             {cryptoData?.map((coin, i) => (
-              <CryptoCard key={coin.id} coin={coin} index={i} />
+              coin.current_price !== null ? (
+                <CryptoCard key={coin.id} coin={coin} index={i} />
+              ) : (
+                <div key={coin.id} style={{
+                  padding: '14px 16px', marginBottom: 8, borderRadius: 14,
+                  background: 'var(--bg-glass)', border: '1px solid var(--border-glass)',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <div>
+                    <span style={{ fontWeight: 700, fontSize: '0.85rem' }}>{coin.name}</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 8 }}>{coin.symbol}</span>
+                  </div>
+                  <span style={{
+                    fontSize: '0.62rem', color: '#ef4444', background: 'rgba(239,68,68,0.1)',
+                    padding: '3px 8px', borderRadius: 20, fontWeight: 600,
+                  }}>🔴 Sin datos</span>
+                </div>
+              )
             ))}
           </div>
         );
 
       case 'noticias':
-        return <NewsTab />;
+        return <NewsTab newsQuality={newsQuality} />;
 
       default:
         return null;

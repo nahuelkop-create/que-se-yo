@@ -2,8 +2,9 @@ import { TrendingUp, TrendingDown, Minus, BarChart2 } from 'lucide-react';
 import { analyzeAsset, formatCurrency, generateOutlook } from '../utils/analysis';
 
 export default function StockCard({ stock, index, onShowChart }) {
-  const analysis = analyzeAsset(stock.priceHistory);
-  const isUp = analysis.changePercent >= 0;
+  const hasRealData = stock.dataQuality?.isReal !== false && stock.priceHistory?.length > 0;
+  const analysis = hasRealData ? analyzeAsset(stock.priceHistory) : null;
+  const isUp = analysis ? analysis.changePercent >= 0 : false;
 
   const trendIcon = {
     alcista: <TrendingUp size={12} />,
@@ -25,7 +26,20 @@ export default function StockCard({ stock, index, onShowChart }) {
   );
 
   return (
-    <div className="stock-card glass-card fade-in-up" style={{ animationDelay: `${index * 0.1}s` }}>
+    <div className="stock-card glass-card fade-in-up" style={{ animationDelay: `${index * 0.1}s`, position: 'relative' }}>
+      {/* Data source badge */}
+      {stock.dataQuality && (
+        <span style={{
+          position: 'absolute', top: 10, right: 10,
+          fontSize: '0.48rem', fontWeight: 600,
+          background: stock.dataQuality.isReal ? 'var(--bullish-bg)' : 'rgba(239,68,68,0.08)',
+          color: stock.dataQuality.isReal ? 'var(--bullish)' : '#ef4444',
+          padding: '2px 6px', borderRadius: 8,
+        }}>
+          {stock.dataQuality.isReal ? '🟢' : '🔴'} {stock.dataQuality.source}
+        </span>
+      )}
+
       <div className="stock-card-header">
         <div className="stock-id">
           <div className={`stock-symbol-badge ${isUp ? 'up' : 'down'}`}>
@@ -33,50 +47,65 @@ export default function StockCard({ stock, index, onShowChart }) {
           </div>
           <div>
             <h3 className="stock-name">{stock.name}</h3>
-            <span className={`stock-change ${isUp ? 'price-up' : 'price-down'}`}>
-              {isUp ? '▲' : '▼'} {Math.abs(analysis.changePercent).toFixed(2)}%
-            </span>
+            {analysis && (
+              <span className={`stock-change ${isUp ? 'price-up' : 'price-down'}`}>
+                {isUp ? '▲' : '▼'} {Math.abs(analysis.changePercent).toFixed(2)}%
+              </span>
+            )}
           </div>
         </div>
         <div className="stock-price-area">
-          <span className="stock-price">{formatCurrency(analysis.currentPrice)}</span>
-          <button className="chart-btn" onClick={() => onShowChart?.(stock)} title="Ver gráfico">
-            <BarChart2 size={16} />
-          </button>
+          <span className="stock-price">{analysis ? formatCurrency(analysis.currentPrice) : '—'}</span>
+          {hasRealData && (
+            <button className="chart-btn" onClick={() => onShowChart?.(stock)} title="Ver gráfico">
+              <BarChart2 size={16} />
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="stock-indicators">
-        <div className="indicator">
-          <span className="ind-label">SMA 20</span>
-          <span className="ind-value">{analysis.sma20 ? formatCurrency(analysis.sma20) : '—'}</span>
-        </div>
-        <div className="indicator">
-          <span className="ind-label">SMA 50</span>
-          <span className="ind-value">{analysis.sma50 ? formatCurrency(analysis.sma50) : '—'}</span>
-        </div>
-        <div className="indicator">
-          <span className="ind-label">RSI</span>
-          <span className={`ind-value ${analysis.rsi >= 70 ? 'price-down' : analysis.rsi <= 30 ? 'price-up' : ''}`}>
-            {analysis.rsi ?? '—'}
-          </span>
-        </div>
-        <div className="indicator">
-          <span className="ind-label">Tendencia</span>
-          <span className={`badge badge-${analysis.trend === 'alcista' ? 'bullish' : analysis.trend === 'bajista' ? 'bearish' : 'neutral'}`}>
-            {trendIcon[analysis.trend]} {trendLabel[analysis.trend]}
-          </span>
-        </div>
-      </div>
+      {hasRealData && analysis ? (
+        <>
+          <div className="stock-indicators">
+            <div className="indicator">
+              <span className="ind-label">SMA 20</span>
+              <span className="ind-value">{analysis.sma20 ? formatCurrency(analysis.sma20) : '—'}</span>
+            </div>
+            <div className="indicator">
+              <span className="ind-label">SMA 50</span>
+              <span className="ind-value">{analysis.sma50 ? formatCurrency(analysis.sma50) : '—'}</span>
+            </div>
+            <div className="indicator">
+              <span className="ind-label">RSI</span>
+              <span className={`ind-value ${analysis.rsi >= 70 ? 'price-down' : analysis.rsi <= 30 ? 'price-up' : ''}`}>
+                {analysis.rsi ?? '—'}
+              </span>
+            </div>
+            <div className="indicator">
+              <span className="ind-label">Tendencia</span>
+              <span className={`badge badge-${analysis.trend === 'alcista' ? 'bullish' : analysis.trend === 'bajista' ? 'bearish' : 'neutral'}`}>
+                {trendIcon[analysis.trend]} {trendLabel[analysis.trend]}
+              </span>
+            </div>
+          </div>
 
-      <div className="stock-recommendation">
-        <div className={`rec-badge badge-${analysis.recommendation.color}`}>
-          {analysis.recommendation.signal}
-        </div>
-        <p className="rec-desc">{analysis.recommendation.description}</p>
-      </div>
+          <div className="stock-recommendation">
+            <div className={`rec-badge badge-${analysis.recommendation.color}`}>
+              {analysis.recommendation.signal}
+            </div>
+            <p className="rec-desc">{analysis.recommendation.description}</p>
+          </div>
 
-      <p className="stock-outlook">{outlook}</p>
+          <p className="stock-outlook">{outlook}</p>
+        </>
+      ) : (
+        <div style={{
+          padding: '12px 0', fontSize: '0.72rem', color: 'var(--text-muted)',
+          borderTop: '1px solid var(--border-subtle)', marginTop: 10,
+        }}>
+          ⚠️ {stock.dataQuality?.reason || 'No hay datos disponibles para este activo.'}
+        </div>
+      )}
 
       <style>{`
         .stock-card {

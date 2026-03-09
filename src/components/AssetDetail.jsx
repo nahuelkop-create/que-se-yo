@@ -36,8 +36,9 @@ export default function AssetDetail({ asset, onBack, settings, isFavorite, onTog
   const loadChartData = useCallback(async () => {
     setChartLoading(true);
     try {
-      const data = await fetchAssetHistory(asset, period, settings);
-      setChartData(data);
+      const result = await fetchAssetHistory(asset, period, settings);
+      // fetchAssetHistory now returns { data, dataQuality }
+      setChartData(result.data || result);
     } catch {
       setChartData(null);
     } finally {
@@ -72,11 +73,35 @@ export default function AssetDetail({ asset, onBack, settings, isFavorite, onTog
 
   const periodLabels = { '1D': '1 día', '1W': '1 semana', '1M': '1 mes', '1Y': '1 año', 'MAX': 'máximo histórico' };
 
-  // AI Analysis — recalculates when period or chart data changes
+  // AI Analysis — only when data is REAL and indicators are complete
+  const dataIsReliable = priceData?.dataQuality?.isReal === true;
+  const hasEnoughHistory = chartData && chartData.length >= 15;
+  const canRunAnalysis = dataIsReliable && hasEnoughHistory;
+
   const aiAnalysis = useMemo(() => {
+    if (!canRunAnalysis) {
+      return {
+        hasData: false,
+        periodLabel: periodLabels[period] || period,
+        message: !dataIsReliable
+          ? 'No se puede generar análisis técnico sin datos reales del mercado.'
+          : 'No hay suficientes datos históricos para calcular indicadores (se necesitan RSI, SMA20, SMA50 y velas).',
+      };
+    }
     const price = priceData?.price || chartData?.[chartData.length - 1]?.close;
-    return generateAIAnalysis(asset.ticker, chartData, period, price);
-  }, [chartData, period, priceData, asset.ticker]);
+    const result = generateAIAnalysis(asset.ticker, chartData, period, price);
+
+    // Post-validate: check that key indicators exist
+    if (result.hasData && (result.rsi === null || result.sma20 === null || result.sma50 === null)) {
+      return {
+        hasData: false,
+        periodLabel: result.periodLabel,
+        message: 'No hay suficientes datos para calcular todos los indicadores necesarios (RSI, SMA20, SMA50). El análisis requiere más historial.',
+      };
+    }
+
+    return result;
+  }, [chartData, period, priceData, asset.ticker, canRunAnalysis, dataIsReliable]);
 
   return (
     <div className="asset-detail fade-in-up">
@@ -127,7 +152,43 @@ export default function AssetDetail({ asset, onBack, settings, isFavorite, onTog
                 {isUp ? '▲' : '▼'} {formatCurrency(Math.abs(priceData.change))} ({Math.abs(priceData.changePercent).toFixed(2)}%)
               </span>
             </div>
+
+            {/* Data Quality Badge */}
+            {priceData.dataQuality && (
+              <div style={{
+                marginTop: 8, display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: '0.65rem', color: 'var(--text-muted)',
+              }}>
+                <span style={{
+                  padding: '2px 8px', borderRadius: 10, fontWeight: 600,
+                  background: priceData.dataQuality.isReal ? 'var(--bullish-bg)' : 'rgba(239,68,68,0.1)',
+                  color: priceData.dataQuality.isReal ? 'var(--bullish)' : '#ef4444',
+                  fontSize: '0.58rem',
+                }}>
+                  {priceData.dataQuality.isReal ? '🟢' : '🔴'} {priceData.dataQuality.source}
+                </span>
+                <span style={{ opacity: 0.7 }}>
+                  {new Date(priceData.dataQuality.lastUpdated).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            )}
           </div>
+
+          {/* Warning if data is not real */}
+          {priceData.dataQuality && !priceData.dataQuality.isReal && (
+            <div className="container" style={{ marginTop: 8 }}>
+              <div style={{
+                padding: '10px 14px', borderRadius: 12,
+                background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.15)',
+                fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.5,
+              }}>
+                ⚠️ <strong style={{ color: '#ef4444' }}>Datos no confiables</strong>
+                <p style={{ margin: '4px 0 0', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                  {priceData.dataQuality.reason}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Candlestick Chart */}
           <div className="ad-chart-section container mt-md">

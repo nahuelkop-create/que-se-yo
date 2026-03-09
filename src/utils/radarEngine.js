@@ -223,10 +223,23 @@ function generateExplanation(category, asset, metrics) {
  */
 export function analyzeRadar(assets, priceCache) {
   const scored = [];
+  let totalSkipped = 0;
 
   for (const asset of assets) {
     const priceData = priceCache[asset.id];
-    if (!priceData || !priceData.price) continue;
+
+    // ═══ FILTRO DE CALIDAD ═══
+    // Solo analizar activos con datos REALES y FRESCOS
+    if (!priceData || !priceData.price) {
+      totalSkipped++;
+      continue;
+    }
+
+    const dq = priceData.dataQuality;
+    if (!dq || !dq.isReal || dq.freshness !== 'fresh') {
+      totalSkipped++;
+      continue;
+    }
 
     const prices = priceData.sparkline || [];
     const price = priceData.price;
@@ -312,7 +325,7 @@ export function analyzeRadar(assets, priceCache) {
       explanation: generateExplanation('risk', item.asset, item.metrics),
     }));
 
-  // Notable Signals: assets with 2+ signals
+  // Notable Signals: assets with 1+ signals
   const signalsHighlight = scored
     .filter(item => item.metrics.signals.length >= 1)
     .sort((a, b) => b.metrics.signals.length - a.metrics.signals.length)
@@ -329,6 +342,7 @@ export function analyzeRadar(assets, priceCache) {
     risk,
     signals: signalsHighlight,
     totalAnalyzed: scored.length,
+    totalSkipped,
     timestamp: new Date().toISOString(),
   };
 }

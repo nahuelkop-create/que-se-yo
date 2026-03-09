@@ -2,8 +2,9 @@ import { TrendingUp, TrendingDown, Minus, ChevronRight, Star } from 'lucide-reac
 import SparklineChart from './SparklineChart';
 
 export default function AssetListItem({ asset, priceData, onClick, isFavorite, onToggleFavorite }) {
-  const isUp = priceData && priceData.changePercent >= 0;
-  const hasPrice = priceData && priceData.price > 0;
+  const hasValidPrice = priceData && priceData.price != null && priceData.price > 0;
+  const isUp = hasValidPrice && priceData.changePercent >= 0;
+  const dq = priceData?.dataQuality;
 
   const categoryColors = {
     crypto: 'var(--accent-cyan)',
@@ -49,12 +50,20 @@ export default function AssetListItem({ asset, priceData, onClick, isFavorite, o
             <span className="ali-ticker">{asset.ticker}</span>
             <span className="ali-cat-dot" style={{ background: categoryColors[asset.category] }} />
             <span className="ali-category">{categoryLabels[asset.category]}</span>
+            {dq && (
+              <span style={{
+                fontSize: '0.48rem', fontWeight: 700, marginLeft: 4,
+                color: dq.isReal ? 'var(--bullish)' : '#ef4444',
+              }}>
+                {dq.isReal ? '🟢' : '🔴'}
+              </span>
+            )}
           </div>
         </div>
       </div>
 
       <div className="ali-right">
-        {hasPrice ? (
+        {hasValidPrice ? (
           <>
             <div className="ali-spark">
               <SparklineChart
@@ -75,6 +84,11 @@ export default function AssetListItem({ asset, priceData, onClick, isFavorite, o
         ) : (
           <div className="ali-price-col">
             <span className="ali-price" style={{ color: 'var(--text-muted)' }}>—</span>
+            {dq && !dq.isReal && (
+              <span style={{ fontSize: '0.55rem', color: '#ef4444' }}>
+                Sin datos
+              </span>
+            )}
           </div>
         )}
         <ChevronRight size={14} className="ali-chevron" />

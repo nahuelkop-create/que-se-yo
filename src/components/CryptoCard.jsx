@@ -3,8 +3,9 @@ import { analyzeAsset, formatCurrency, generateOutlook } from '../utils/analysis
 import SparklineChart from './SparklineChart';
 
 export default function CryptoCard({ coin, index }) {
-  const analysis = analyzeAsset(coin.priceHistory, coin.current_price);
-  const change = coin.price_change_percentage_24h || analysis.changePercent;
+  const hasRealData = coin.dataQuality?.isReal !== false && coin.current_price != null;
+  const analysis = hasRealData ? analyzeAsset(coin.priceHistory, coin.current_price) : null;
+  const change = coin.price_change_percentage_24h || analysis?.changePercent || 0;
   const isUp = change >= 0;
 
   const trendIcon = {
@@ -35,10 +36,12 @@ export default function CryptoCard({ coin, index }) {
           </div>
         </div>
         <div className="crypto-price-block">
-          <span className="crypto-price">{formatCurrency(coin.current_price)}</span>
-          <span className={`crypto-change ${isUp ? 'price-up' : 'price-down'}`}>
-            {isUp ? '▲' : '▼'} {Math.abs(change).toFixed(2)}%
-          </span>
+          <span className="crypto-price">{coin.current_price ? formatCurrency(coin.current_price) : '—'}</span>
+          {coin.current_price && (
+            <span className={`crypto-change ${isUp ? 'price-up' : 'price-down'}`}>
+              {isUp ? '▲' : '▼'} {Math.abs(change).toFixed(2)}%
+            </span>
+          )}
         </div>
       </div>
 
@@ -51,31 +54,57 @@ export default function CryptoCard({ coin, index }) {
       </div>
 
       <div className="crypto-card-bottom">
-        <div className="crypto-stats">
-          <div className="crypto-stat">
-            <span className="stat-label">Cap. Mercado</span>
-            <span className="stat-value">{formatCurrency(coin.market_cap)}</span>
+        {hasRealData && analysis ? (
+          <>
+            <div className="crypto-stats">
+              <div className="crypto-stat">
+                <span className="stat-label">Cap. Mercado</span>
+                <span className="stat-value">{formatCurrency(coin.market_cap)}</span>
+              </div>
+              <div className="crypto-stat">
+                <span className="stat-label">RSI</span>
+                <span className="stat-value">{analysis.rsi ?? '—'}</span>
+              </div>
+              <div className="crypto-stat">
+                <span className="stat-label">Señal</span>
+                <span className={`badge badge-${analysis.recommendation.color}`}>
+                  {analysis.recommendation.signal}
+                </span>
+              </div>
+            </div>
+            <div className={`trend-indicator badge badge-${analysis.trend === 'alcista' ? 'bullish' : analysis.trend === 'bajista' ? 'bearish' : 'neutral'}`}>
+              {trendIcon[analysis.trend]} {trendLabel[analysis.trend]}
+            </div>
+          </>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+            <span style={{
+              fontSize: '0.6rem', fontWeight: 600,
+              background: 'rgba(239,68,68,0.1)', color: '#ef4444',
+              padding: '2px 8px', borderRadius: 10,
+            }}>🔴 {coin.dataQuality?.reason || 'Sin datos'}</span>
           </div>
-          <div className="crypto-stat">
-            <span className="stat-label">RSI</span>
-            <span className="stat-value">{analysis.rsi ?? '—'}</span>
-          </div>
-          <div className="crypto-stat">
-            <span className="stat-label">Señal</span>
-            <span className={`badge badge-${analysis.recommendation.color}`}>
-              {analysis.recommendation.signal}
-            </span>
-          </div>
-        </div>
-        <div className={`trend-indicator badge badge-${analysis.trend === 'alcista' ? 'bullish' : analysis.trend === 'bajista' ? 'bearish' : 'neutral'}`}>
-          {trendIcon[analysis.trend]} {trendLabel[analysis.trend]}
-        </div>
+        )}
+
+        {/* Data source badge */}
+        {coin.dataQuality && (
+          <span style={{
+            position: 'absolute', top: 10, right: 10,
+            fontSize: '0.48rem', fontWeight: 600,
+            background: coin.dataQuality.isReal ? 'var(--bullish-bg)' : 'rgba(239,68,68,0.08)',
+            color: coin.dataQuality.isReal ? 'var(--bullish)' : '#ef4444',
+            padding: '2px 6px', borderRadius: 8,
+          }}>
+            {coin.dataQuality.isReal ? '🟢' : '🔴'} {coin.dataQuality.source}
+          </span>
+        )}
       </div>
 
       <style>{`
         .crypto-card {
           padding: 14px;
           margin-bottom: 10px;
+          position: relative;
         }
 
         .crypto-card-top {

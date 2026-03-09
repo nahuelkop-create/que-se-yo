@@ -87,33 +87,72 @@ export default function RadarTab({ onSelectAsset, settings }) {
     ? SECTIONS.filter(s => s.id === activeSection)
     : SECTIONS;
 
+  const noValidAssets = radar.totalAnalyzed === 0;
+
   return (
     <div className="radar-tab container mt-md">
       {/* Header */}
       <div className="section-header">
         <h2 className="section-title"><Crosshair size={18} /> Radar IA</h2>
-        <span className="section-subtitle">{radar.totalAnalyzed} activos analizados</span>
+        <span className="section-subtitle">
+          {radar.totalAnalyzed} analizados
+          {radar.totalSkipped > 0 && (
+            <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>
+              · {radar.totalSkipped} excluidos
+            </span>
+          )}
+        </span>
       </div>
 
+      {/* Data quality info */}
+      {radar.totalSkipped > 0 && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 12, borderRadius: 10,
+          background: 'rgba(59, 130, 246, 0.06)', border: '1px solid rgba(59, 130, 246, 0.15)',
+          fontSize: '0.65rem', color: 'var(--text-muted)', lineHeight: 1.5,
+        }}>
+          ℹ️ Se excluyeron {radar.totalSkipped} activos sin datos reales o actualizados.
+          Solo se analizan activos con datos confiables y frescos.
+        </div>
+      )}
+
+      {/* No valid assets warning */}
+      {noValidAssets && (
+        <div style={{
+          padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)',
+          background: 'var(--bg-glass)', borderRadius: 14, border: '1px solid var(--border-glass)',
+        }}>
+          <Crosshair size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+          <p style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 6 }}>
+            No hay suficientes activos con datos confiables
+          </p>
+          <p style={{ fontSize: '0.72rem' }}>
+            El radar necesita datos reales y actualizados. Revisá tu conexión o configurá API keys en ⚙️.
+          </p>
+        </div>
+      )}
+
       {/* Section Nav */}
-      <div className="rt-nav">
-        <button
-          className={`rt-nav-btn ${!activeSection ? 'active' : ''}`}
-          onClick={() => setActiveSection(null)}
-        >
-          Todo
-        </button>
-        {SECTIONS.map(sec => (
+      {!noValidAssets && (
+        <div className="rt-nav">
           <button
-            key={sec.id}
-            className={`rt-nav-btn ${activeSection === sec.id ? 'active' : ''}`}
-            onClick={() => setActiveSection(activeSection === sec.id ? null : sec.id)}
-            style={activeSection === sec.id ? { borderColor: sec.color, color: sec.color } : {}}
+            className={`rt-nav-btn ${!activeSection ? 'active' : ''}`}
+            onClick={() => setActiveSection(null)}
           >
-            <sec.icon size={11} /> {sec.title.split(' ')[0]}
+            Todo
           </button>
-        ))}
-      </div>
+          {SECTIONS.map(sec => (
+            <button
+              key={sec.id}
+              className={`rt-nav-btn ${activeSection === sec.id ? 'active' : ''}`}
+              onClick={() => setActiveSection(activeSection === sec.id ? null : sec.id)}
+              style={activeSection === sec.id ? { borderColor: sec.color, color: sec.color } : {}}
+            >
+              <sec.icon size={11} /> {sec.title.split(' ')[0]}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Radar Blocks */}
       {visibleSections.map(section => {
@@ -200,6 +239,18 @@ export default function RadarTab({ onSelectAsset, settings }) {
                   </div>
 
                   <p className="rt-card-explanation">{item.explanation}</p>
+
+                  {/* Data source badge */}
+                  {item.priceData?.dataQuality && (
+                    <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{
+                        fontSize: '0.5rem', color: 'var(--bullish)', fontWeight: 600,
+                        background: 'var(--bullish-bg)', padding: '2px 6px', borderRadius: 10,
+                      }}>
+                        📡 {item.priceData.dataQuality.source}
+                      </span>
+                    </div>
+                  )}
 
                   {item.metrics.signals.length > 0 && section.id === 'signals' && (
                     <div className="rt-card-signals">
